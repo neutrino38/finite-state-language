@@ -30,6 +30,7 @@ import {
   registerMachine,
   type InternalDef,
 } from "./instance.js";
+import { renderMermaid } from "./mermaid.js";
 
 const RESERVED = new Set<string>(Object.values(TERMINAL_STATES));
 
@@ -116,6 +117,7 @@ export function defineMachine<
       name: def.name,
       start: (opts?: StartOpts<Ctx>): Instance<Ctx, Ev, SN> =>
         new MachineInstance<Ctx, Ev, SN>(internal, successor, opts),
+      toMermaid: () => renderMermaid(internal),
     };
     // fx.spawn resolves the machine back to its internals through this
     // registry (design §6).

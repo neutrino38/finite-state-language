@@ -7,6 +7,9 @@ dist/
 # Test coverage
 coverage/
 
+# Generated API reference (npm run docs)
+typescript/docs/api/
+
 # Logs
 *.log
 npm-debug.log*

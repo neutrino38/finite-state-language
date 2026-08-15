@@ -146,7 +146,8 @@ service, the pun has done its job.
 
 This is the ground floor — the API is still soft, which means your use case
 can still shape it. Open an issue, challenge the spec, tell us about the
-communication UI you wish were easier to build. Come help us make FSL...
+communication UI you wish were easier to build — the ground rules are in
+[CONTRIBUTING.md](CONTRIBUTING.md). Come help us make FSL...
 fully operational. We'd love to have you — *no state secrets here*.
 
 ## License

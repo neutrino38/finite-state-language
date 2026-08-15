@@ -1,0 +1,14 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts", "src/http/index.ts", "src/react/index.ts"],
+  "out": "docs/api",
+  "name": "finite-state-language",
+  "includeVersion": true,
+  "excludeInternal": true,
+  "excludePrivate": true,
+  "categorizeByGroup": true,
+  "navigationLinks": {
+    "Spec": "https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md",
+    "GitHub": "https://github.com/neutrino38/finite-state-language"
+  }
+}

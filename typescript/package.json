@@ -23,7 +23,8 @@
     "node": ">=18"
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "exports": {
     ".": {
@@ -47,7 +48,8 @@
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "check:zero-deps": "node scripts/check-zero-deps.mjs",
-    "check:js-consumer": "tsc -p test/js-consumer/tsconfig.json"
+    "check:js-consumer": "tsc -p test/js-consumer/tsconfig.json",
+    "docs": "typedoc"
   },
   "peerDependencies": {
     "react": ">=18"
@@ -68,6 +70,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tsup": "^8.5.1",
+    "typedoc": "^0.28.20",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
