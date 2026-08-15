@@ -24,6 +24,8 @@ import type {
 import { TERMINAL_STATES } from "./types.js";
 import { PendingQueue } from "./pending.js";
 import { TransitionLog, type LogEntry } from "./log.js";
+import { TimerBag } from "./timers.js";
+import { TaskManager, type TaskOpts } from "./tasks.js";
 
 /** Bound on synchronous transition chains (design §4.8). */
 const MAX_CHAIN = 1000;
@@ -39,11 +41,20 @@ type AnyHandler = (
   fx: unknown,
 ) => Transition | void;
 
+interface InternalAfter {
+  delay: number;
+  then: (ctx: unknown, fx: unknown) => Transition | void;
+}
+
 interface InternalStateDef {
   enter?: (ctx: unknown, fx: unknown) => Transition | void;
   on?: Record<string, AnyHandler | string | undefined>;
+  after?: InternalAfter;
   meta?: Record<string, unknown>;
 }
+
+/** Pseudo-event used to label after-timer transitions in logs. */
+const AFTER_EVENT: AnyEvent = Object.freeze({ type: "after" });
 
 export interface InternalDef {
   name: string;
@@ -72,6 +83,8 @@ export class MachineInstance<
   private replayGen = 0;
 
   private readonly pendingQ: PendingQueue<AnyEvent>;
+  private readonly timers = new TimerBag();
+  private readonly tasks = new TaskManager((ev) => this.send(ev as Ev));
   private readonly subscribers = new Set<Listener<Ctx, Ev, SN>>();
   private snapshot!: Snapshot<Ctx, Ev, SN>;
   private readonly translog: TransitionLog;
@@ -109,6 +122,11 @@ export class MachineInstance<
 
     this.fx = {
       send: (ev) => this.send(ev),
+      delay: (ev, ms, opts) =>
+        this.timers.delay(ms, opts?.sticky ?? false, () => this.send(ev)),
+      task: (work, tag, opts) =>
+        this.tasks.run(work, tag, opts as TaskOpts<unknown>),
+      cancel: (tag) => this.tasks.cancel(tag),
       dropPending: (sel) =>
         this.pendingQ.drop(sel as string | ((ev: AnyEvent) => boolean)),
     };
@@ -263,6 +281,8 @@ export class MachineInstance<
       this.finalize("failure", `goto unknown state '${target}'`, ev);
       return;
     }
+    // State exit: cancel the after timer and non-sticky delays (§3.2).
+    this.timers.onExit();
     this.record(this.stateName, target, ev, desc);
     this.stateName = target;
     // Notify on entry, before `enter` runs: subscribers see every hop of
@@ -277,6 +297,12 @@ export class MachineInstance<
       return;
     }
     // stay/void from enter are equivalent: the entry already notified.
+    // Arm `after` only once the state settles (an enter that immediately
+    // transitions never leaks a timer — design §4.4).
+    const afterSpec = sd.after;
+    if (afterSpec !== undefined) {
+      this.timers.armAfter(afterSpec.delay, () => this.fireAfter(afterSpec));
+    }
     this.replayPending();
     if (this.phase === "running" && redispatch) this.dispatch(redispatch);
   }
@@ -303,6 +329,22 @@ export class MachineInstance<
     }
   }
 
+  /** The state's `after` timer fired (spec §3.2). */
+  private fireAfter(spec: InternalAfter): void {
+    if (this.phase !== "running") return;
+    // Same discipline as an external event: fresh chain budget, drain
+    // latch held so fx.send from `then` queues instead of re-entering.
+    this.draining = true;
+    this.chain = 0;
+    try {
+      const t = this.guard(() => spec.then(this.ctx, this.fx));
+      if (t !== FAILED) this.applyTransition(t, AFTER_EVENT);
+    } finally {
+      this.draining = false;
+    }
+    this.drain();
+  }
+
   // ---- termination (design §4.9) -------------------------------------------
 
   private finalize(outcome: Outcome, reason?: string, ev?: AnyEvent): void {
@@ -313,7 +355,9 @@ export class MachineInstance<
     this.pendingQ.clear();
     this.record(this.stateName, terminal, ev, reason);
     this.stateName = terminal;
-    // M3 adds timer/task cancellation here; M4 adds child teardown.
+    this.timers.cancelAll();
+    this.tasks.cancelAll();
+    // M4 adds child teardown here.
     try {
       this.def.cleanup?.(this.ctx);
     } catch (err) {

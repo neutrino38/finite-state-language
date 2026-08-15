@@ -78,6 +78,21 @@ export function defineMachine<
           );
         }
       }
+      const after = stateDef.after;
+      if (after !== undefined) {
+        if (typeof after.delay !== "number" || after.delay < 0) {
+          throw new TypeError(
+            `machine '${def.name}': state '${stateName}' has an invalid ` +
+              `after.delay`,
+          );
+        }
+        if (typeof after.then !== "function") {
+          throw new TypeError(
+            `machine '${def.name}': state '${stateName}' after.then ` +
+              `must be a function`,
+          );
+        }
+      }
     }
 
     // Declaration order defines next() (spec §3.1).

@@ -19,6 +19,7 @@ export {
 export { TERMINAL_STATES } from "./core/types.js";
 export type {
   AnyEvent,
+  DelayHandle,
   DoneResult,
   Fx,
   Handler,
@@ -31,6 +32,7 @@ export type {
   Snapshot,
   StartOpts,
   StateDef,
+  TaskResult,
   TerminalStateName,
   TransitionNotification,
 } from "./core/types.js";

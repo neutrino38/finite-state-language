@@ -1,11 +1,17 @@
 /**
- * The spec §2 example, headless (M1 exit criterion).
- * The `after` timeout clauses of the original arrive with M3 and are
- * omitted here; everything else is the spec machine verbatim, driven
- * by scripted events against a fake SIP stack.
+ * The spec §2 example, headless and complete (M1 + M3 exit criteria):
+ * the spec machine verbatim — `after` timeout clauses included — driven
+ * by scripted events and fake timers against a fake SIP stack.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineMachine, failure, goto, loop, stay } from "../src/index.js";
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // ---- fake comm stack (FSL never sees its type — spec §1.3) -----------------
 
@@ -73,6 +79,10 @@ const WebPhone = defineMachine<PhoneCtx, PhoneEvent>()({
         "sip:registered": () => goto("ready", "REGISTER OK"),
         "sip:registrationFailed": (ev) => failure(`registration: ${ev.cause}`),
       },
+      after: {
+        delay: 30_000,
+        then: () => failure("registrar did not answer"),
+      },
     },
 
     ready: {
@@ -101,6 +111,10 @@ const WebPhone = defineMachine<PhoneCtx, PhoneEvent>()({
           ctx.session?.terminate();
           return goto("ready", "caller gave up");
         },
+      },
+      after: {
+        delay: 90_000,
+        then: () => goto("call_failed", "no answer"),
       },
     },
 
@@ -133,6 +147,7 @@ const WebPhone = defineMachine<PhoneCtx, PhoneEvent>()({
       on: {
         "ui:call": "ready", // shorthand: re-dispatch after moving there
       },
+      after: { delay: 5_000, then: () => goto("ready") },
     },
   },
 });
@@ -205,6 +220,26 @@ describe("spec §2 — the web phone, headless", () => {
       "sip:busy@example.com",
       "sip:carol@example.com",
     ]);
+  });
+
+  it("fails the scenario when the registrar stays silent for 30 s", async () => {
+    const phone = WebPhone.start();
+    vi.advanceTimersByTime(30_000);
+    expect(await phone.done).toEqual({
+      outcome: "failure",
+      reason: "registrar did not answer",
+    });
+  });
+
+  it("gives up an unanswered call after 90 s, then auto-returns to ready", () => {
+    const phone = WebPhone.start();
+    phone.send({ type: "sip:registered" });
+    phone.send({ type: "ui:call", number: "sip:alice@example.com" });
+    phone.send({ type: "sip:progress" }); // ringing... loop re-arms the 90 s
+    vi.advanceTimersByTime(90_000);
+    expect(phone.state).toBe("call_failed");
+    vi.advanceTimersByTime(5_000);
+    expect(phone.state).toBe("ready");
   });
 
   it("does not lose an INVITE racing a state change (§4.2)", () => {

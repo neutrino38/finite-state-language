@@ -22,14 +22,42 @@ export const TERMINAL_STATES = {
 
 export type TerminalStateName = (typeof TERMINAL_STATES)[Outcome];
 
+/** Handle returned by fx.delay: cancel before it fires. */
+export interface DelayHandle {
+  cancel(): void;
+}
+
+/**
+ * Settlement event delivered by fx.task (spec §4.3) — add it to the
+ * machine's event union: `type Ev = ... | TaskResult<"policy", Policy>`.
+ */
+export type TaskResult<Tag extends string, T = unknown> =
+  | { type: `task:${Tag}`; ok: true; value: T }
+  | { type: `task:${Tag}`; ok: false; error: string };
+
 /**
  * Effects facade passed to `enter` and to event handlers.
- * M1 surface: `send` + `dropPending`; `delay`/`task`/`cancel` arrive in
- * M3, `spawn`/`notify`/`notifyParent` in M4 (design §3.4).
+ * `spawn`/`notify`/`notifyParent` arrive in M4 (design §3.4).
  */
 export interface Fx<Ev extends AnyEvent> {
   /** Self-send: enqueued, processed after the current event (spec §4.3). */
   send(ev: Ev): void;
+  /**
+   * Send later. Cancelled on state exit unless `sticky` (spec §4.3).
+   */
+  delay(ev: Ev, ms: number, opts?: { sticky?: boolean }): DelayHandle;
+  /**
+   * The Valet pattern (spec §4.3): run `work`, deliver exactly one
+   * `task:<tag>` event — settlement, timeout or nothing (if cancelled).
+   * On timeout the AbortSignal fires so the work is actually cancelled.
+   */
+  task<T>(
+    work: Promise<T> | ((signal: AbortSignal) => Promise<T>),
+    tag: string,
+    opts?: { timeout?: number },
+  ): void;
+  /** Abort and discard a pending task: its event will never arrive. */
+  cancel(tag: string): void;
   /** Purge matching events from the pending queue (spec §4.2). */
   dropPending(sel: Ev["type"] | ((ev: Ev) => boolean)): void;
 }
@@ -68,6 +96,14 @@ export interface StateDef<
    */
   enter?: (ctx: Ctx, fx: Fx<Ev>) => Transition<NoInfer<SN>> | void;
   on?: OnMap<Ctx, Ev, SN>;
+  /**
+   * One timer, armed when the state is entered, cancelled on exit,
+   * re-armed on `loop()` — the Elixir `after` clause (spec §3.2).
+   */
+  after?: {
+    delay: number;
+    then: (ctx: Ctx, fx: Fx<Ev>) => Transition<NoInfer<SN>> | void;
+  };
   /** Free-form UI hints, exposed as `snapshot.meta` (spec §7.3). */
   meta?: Record<string, unknown>;
 }
