@@ -1,8 +1,9 @@
 # FSL for TypeScript — Implementation Plan
 
-Companion to [fsl-js-ts.md](fsl-js-ts.md). Each milestone ends green: build,
-tests, lint all passing. Milestones are ordered so that every one delivers
-something usable.
+Companion to [the language spec](../../spec/fsl-js-ts.md). Everything in
+this plan lives under `typescript/` in the repository. Each milestone ends
+green: build, tests, lint all passing. Milestones are ordered so that every
+one delivers something usable.
 
 ## M0 — Project scaffold
 

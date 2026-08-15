@@ -73,10 +73,25 @@ machine explicit:
 - **Stack-agnostic** — FSL never imports a SIP library. Handles live in the
   machine context; a ~50-line binding connects any stack.
 
-Read the full picture in
-[docs/specs-and-design/fsl-js-ts.md](docs/specs-and-design/fsl-js-ts.md) and
-the roadmap in
-[docs/specs-and-design/implementation-plan.md](docs/specs-and-design/implementation-plan.md).
+Read the full picture in [spec/fsl-js-ts.md](spec/fsl-js-ts.md) and the
+roadmap in
+[typescript/docs/implementation-plan.md](typescript/docs/implementation-plan.md).
+
+## Repository layout
+
+FSL is a language first, an implementation second — this repository is
+structured accordingly:
+
+```
+spec/          the language: semantics, event model, design decisions
+typescript/    the TypeScript implementation (npm: finite-state-language)
+elixir/        reserved: the Elixir implementation, to be extracted from
+               Elixip's DSL (same states, same event model, no SIP coupling)
+```
+
+The two implementations must stay semantically aligned; the spec is the
+arbiter. When they diverge on purpose (JS has no process mailbox; the BEAM
+needs no pending queue), the divergence is documented in the spec.
 
 ## The other FSL
 
