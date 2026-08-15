@@ -35,10 +35,25 @@ export type TaskResult<Tag extends string, T = unknown> =
   | { type: `task:${Tag}`; ok: true; value: T }
   | { type: `task:${Tag}`; ok: false; error: string };
 
-/**
- * Effects facade passed to `enter` and to event handlers.
- * `spawn`/`notify`/`notifyParent` arrive in M4 (design §3.4).
- */
+/** Sent to a child by fx.notify (spec §8.1). */
+export type ParentMsg<P = unknown> = { type: "parent:msg"; payload: P };
+
+/** Sent to the parent by fx.notifyParent (spec §8.1). */
+export type ChildMsg<P = unknown> = {
+  type: "child:msg";
+  from: string;
+  payload: P;
+};
+
+/** Sent to the parent when a child terminates (spec §8.1). */
+export type ChildExit = {
+  type: "child:exit";
+  from: string;
+  outcome: Outcome;
+  reason?: string;
+};
+
+/** Effects facade passed to `enter` and to event handlers (design §3.4). */
 export interface Fx<Ev extends AnyEvent> {
   /** Self-send: enqueued, processed after the current event (spec §4.3). */
   send(ev: Ev): void;
@@ -60,6 +75,23 @@ export interface Fx<Ev extends AnyEvent> {
   cancel(tag: string): void;
   /** Purge matching events from the pending queue (spec §4.2). */
   dropPending(sel: Ev["type"] | ((ev: Ev) => boolean)): void;
+  /**
+   * Start a child machine owned by this instance (spec §8.1). The
+   * child inherits debug/logger; `args` merges into its fresh context.
+   * Spawning a name that is already alive is a runtime error (⇒
+   * failure). Child termination delivers `child:exit`.
+   */
+  spawn<C, E extends AnyEvent>(
+    machine: Machine<C, E, string>,
+    opts: { as: string; args?: Partial<C> },
+  ): void;
+  /** Deliver `{type: "parent:msg", payload}` to a named child. */
+  notify(child: string, payload: unknown): void;
+  /**
+   * Deliver `{type: "child:msg", from, payload}` to the parent.
+   * A no-op without a parent, so the same machine runs standalone.
+   */
+  notifyParent(payload: unknown): void;
 }
 
 /**
@@ -126,6 +158,13 @@ export interface MachineDef<
   states: Record<SN, StateDef<Ctx, Ev, SN>>;
   /** Pending-queue bound, default 32 (spec §4.2). */
   pending?: { max?: number };
+  /**
+   * Cooperative shutdown hook (spec §8.2): decides the exit. May return
+   * a terminal transition, a non-terminal one (finish business first —
+   * the machine keeps running toward its own end), or nothing
+   * (⇒ aborted with the shutdown reason).
+   */
+  onShutdown?: (ctx: Ctx, fx: Fx<Ev>) => Transition<NoInfer<SN>> | void;
   /** Called after any terminal transition, before `done` settles (spec §8.3). */
   cleanup?: (ctx: Ctx) => void;
 }
@@ -139,6 +178,11 @@ export interface StartOpts<Ctx> {
   logger?: (line: string) => void;
   /** Transition ring-buffer size, default 50. */
   logSize?: number;
+  /**
+   * Grace period (ms) granted to children for cooperative shutdown
+   * before stragglers are force-stopped, default 5000 (spec §8.1).
+   */
+  graceMs?: number;
 }
 
 /**
@@ -176,7 +220,7 @@ export interface DoneResult {
   reason?: string;
 }
 
-/** A running machine instance (spec §6). `shutdown` arrives in M4. */
+/** A running machine instance (spec §6). */
 export interface Instance<
   Ctx,
   Ev extends AnyEvent,
@@ -191,6 +235,8 @@ export interface Instance<
   subscribe(fn: Listener<Ctx, Ev, SN>): () => void;
   getSnapshot(): Snapshot<Ctx, Ev, SN>;
   matches(s: SN | TerminalStateName): boolean;
+  /** Cooperative shutdown (spec §8.2); resolves with the final outcome. */
+  shutdown(reason?: string): Promise<DoneResult>;
 }
 
 export interface Machine<Ctx, Ev extends AnyEvent, SN extends string = string> {

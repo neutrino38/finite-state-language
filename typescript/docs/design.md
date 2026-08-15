@@ -485,8 +485,12 @@ method calls — no bus:
 
 - `fx.notify(name, payload)` → `children.get(name).send({ type: "parent:msg", payload })`;
 - `fx.notifyParent(payload)` → `parent?.send({ type: "child:msg", from: myName, payload })` — literally a no-op without a parent (spec §8.1);
-- the parent awaits each child's `done` to synthesize
-  `{ type: "child:exit", from, outcome, reason }`.
+- the child calls `parent.childExited(name, result)` **synchronously** at
+  the end of its own teardown, which synthesizes
+  `{ type: "child:exit", from, outcome, reason }` (M4 finding: awaiting
+  the child's `done` promise would defer child:exit to a microtask and
+  make parent/child conversations nondeterministic under the
+  synchronous drain).
 
 Spawning a duplicate name is a runtime error (⇒ `failure`). A child that
 exits is removed from the registry.

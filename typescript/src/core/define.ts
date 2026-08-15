@@ -25,7 +25,11 @@ import type {
   StateDef,
 } from "./types.js";
 import { TERMINAL_STATES } from "./types.js";
-import { MachineInstance, type InternalDef } from "./instance.js";
+import {
+  MachineInstance,
+  registerMachine,
+  type InternalDef,
+} from "./instance.js";
 
 const RESERVED = new Set<string>(Object.values(TERMINAL_STATES));
 
@@ -101,11 +105,21 @@ export function defineMachine<
       successor[names[i] as string] = names[i + 1];
     }
 
+    if (def.onShutdown !== undefined && typeof def.onShutdown !== "function") {
+      throw new TypeError(
+        `machine '${def.name}': 'onShutdown' must be a function`,
+      );
+    }
+
     const internal = def as unknown as InternalDef;
-    return {
+    const machine: Machine<Ctx, Ev, SN> = {
       name: def.name,
       start: (opts?: StartOpts<Ctx>): Instance<Ctx, Ev, SN> =>
         new MachineInstance<Ctx, Ev, SN>(internal, successor, opts),
     };
+    // fx.spawn resolves the machine back to its internals through this
+    // registry (design §6).
+    registerMachine(machine, { def: internal, successor });
+    return machine;
   };
 }

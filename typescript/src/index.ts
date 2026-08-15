@@ -19,6 +19,8 @@ export {
 export { TERMINAL_STATES } from "./core/types.js";
 export type {
   AnyEvent,
+  ChildExit,
+  ChildMsg,
   DelayHandle,
   DoneResult,
   Fx,
@@ -29,6 +31,7 @@ export type {
   MachineDef,
   OnMap,
   Outcome,
+  ParentMsg,
   Snapshot,
   StartOpts,
   StateDef,

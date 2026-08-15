@@ -11,11 +11,15 @@
 import type { Transition } from "./transition.js";
 import type {
   AnyEvent,
+  ChildExit,
+  ChildMsg,
   DoneResult,
   Fx,
   Instance,
   Listener,
+  Machine,
   Outcome,
+  ParentMsg,
   Snapshot,
   StartOpts,
   TerminalStateName,
@@ -61,7 +65,40 @@ export interface InternalDef {
   context: () => unknown;
   states: Record<string, InternalStateDef>;
   pending?: { max?: number };
+  onShutdown?: (ctx: unknown, fx: unknown) => Transition | void;
   cleanup?: (ctx: unknown) => void;
+}
+
+/** Pseudo-event used to label shutdown transitions in logs. */
+const SHUTDOWN_EVENT: AnyEvent = Object.freeze({ type: "shutdown" });
+
+const DEFAULT_GRACE_MS = 5000;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyInstance = MachineInstance<any, AnyEvent, string>;
+
+interface ParentLink {
+  parent: AnyInstance;
+  name: string;
+}
+
+interface MachineInternals {
+  def: InternalDef;
+  successor: Readonly<Record<string, string | undefined>>;
+}
+
+/**
+ * defineMachine registers every Machine here so fx.spawn can construct
+ * a child instance with its parent link in place before the child's
+ * initial enter runs (design §6).
+ */
+const MACHINE_REGISTRY = new WeakMap<object, MachineInternals>();
+
+export function registerMachine(
+  machine: object,
+  internals: MachineInternals,
+): void {
+  MACHINE_REGISTRY.set(machine, internals);
 }
 
 export class MachineInstance<
@@ -75,7 +112,7 @@ export class MachineInstance<
   private readonly successor: Readonly<Record<string, string | undefined>>;
   private readonly ctx: Ctx;
   private stateName: string = "(start)";
-  private phase: "running" | "done" = "running";
+  private phase: "running" | "terminating" | "done" = "running";
 
   private readonly inbox: AnyEvent[] = [];
   private draining = false;
@@ -85,6 +122,13 @@ export class MachineInstance<
   private readonly pendingQ: PendingQueue<AnyEvent>;
   private readonly timers = new TimerBag();
   private readonly tasks = new TaskManager((ev) => this.send(ev as Ev));
+  private readonly children = new Map<string, AnyInstance>();
+  private readonly parentLink: ParentLink | undefined;
+  private readonly graceMs: number;
+  private readonly inheritedOpts: Pick<
+    StartOpts<Ctx>,
+    "debug" | "logger" | "logSize" | "graceMs"
+  >;
   private readonly subscribers = new Set<Listener<Ctx, Ev, SN>>();
   private snapshot!: Snapshot<Ctx, Ev, SN>;
   private readonly translog: TransitionLog;
@@ -99,9 +143,18 @@ export class MachineInstance<
     def: InternalDef,
     successor: Readonly<Record<string, string | undefined>>,
     opts: StartOpts<Ctx> = {},
+    parentLink?: ParentLink,
   ) {
     this.def = def;
     this.successor = successor;
+    this.parentLink = parentLink;
+    this.graceMs = opts.graceMs ?? DEFAULT_GRACE_MS;
+    this.inheritedOpts = {
+      debug: opts.debug,
+      logger: opts.logger,
+      logSize: opts.logSize,
+      graceMs: opts.graceMs,
+    };
     this.debug = opts.debug ?? false;
     this.debugLogger = opts.logger ?? ((line) => console.debug(line));
     this.warnLogger = opts.logger ?? ((line) => console.warn(line));
@@ -129,6 +182,18 @@ export class MachineInstance<
       cancel: (tag) => this.tasks.cancel(tag),
       dropPending: (sel) =>
         this.pendingQ.drop(sel as string | ((ev: AnyEvent) => boolean)),
+      spawn: (machine, opts) => this.spawnChild(machine, opts),
+      notify: (child, payload) => this.notifyChild(child, payload),
+      notifyParent: (payload) => {
+        // No-op without a parent: the same machine runs standalone.
+        if (this.parentLink === undefined) return;
+        const msg: ChildMsg = {
+          type: "child:msg",
+          from: this.parentLink.name,
+          payload,
+        };
+        this.parentLink.parent.send(msg as AnyEvent as never);
+      },
     };
 
     // Enter initial_state under the drain latch so fx.send from its
@@ -179,6 +244,32 @@ export class MachineInstance<
 
   matches(s: SN | TerminalStateName): boolean {
     return this.stateName === s;
+  }
+
+  /** Cooperative shutdown (spec §8.2, design §6). */
+  shutdown(reason?: string): Promise<DoneResult> {
+    if (this.phase !== "running") return this.done;
+    const onShutdown = this.def.onShutdown;
+    if (onShutdown === undefined) {
+      this.finalize("aborted", reason, SHUTDOWN_EVENT);
+      return this.done;
+    }
+    // Same discipline as an external event; save/restore the latch so a
+    // shutdown() issued from within a handler stays well-nested.
+    const wasDraining = this.draining;
+    this.draining = true;
+    this.chain = 0;
+    try {
+      const t = this.guard(() => onShutdown(this.ctx, this.fx));
+      if (t !== FAILED) {
+        if (t == null) this.finalize("aborted", reason, SHUTDOWN_EVENT);
+        else this.applyTransition(t, SHUTDOWN_EVENT);
+      }
+    } finally {
+      this.draining = wasDraining;
+    }
+    this.drain();
+    return this.done;
   }
 
   // ---- event loop (design §4.1–4.2) ----------------------------------------
@@ -329,6 +420,87 @@ export class MachineInstance<
     }
   }
 
+  // ---- sub-machines (spec §8.1, design §6) ---------------------------------
+
+  /** Internal: true once done has settled. */
+  get settled(): boolean {
+    return this.phase === "done";
+  }
+
+  private spawnChild(
+    machine: Machine<unknown, AnyEvent, string>,
+    opts: { as: string; args?: unknown },
+  ): void {
+    if (this.phase !== "running") return;
+    const internals = MACHINE_REGISTRY.get(machine as object);
+    if (internals === undefined) {
+      throw new Error(
+        `spawn: '${String(opts.as)}' is not a machine created by defineMachine`,
+      );
+    }
+    if (this.children.has(opts.as)) {
+      throw new Error(`spawn: child '${opts.as}' already exists`);
+    }
+    const child = new MachineInstance(
+      internals.def,
+      internals.successor,
+      {
+        ...this.inheritedOpts,
+        args: opts.args as never,
+      },
+      { parent: this as unknown as AnyInstance, name: opts.as },
+    );
+    // The child may have terminated synchronously during its own start
+    // (childExited already fired): only register it while alive.
+    if (!child.settled) this.children.set(opts.as, child as AnyInstance);
+  }
+
+  private notifyChild(name: string, payload: unknown): void {
+    const child = this.children.get(name);
+    if (child === undefined) {
+      this.warn(`notify: no child named '${name}'`);
+      return;
+    }
+    const msg: ParentMsg = { type: "parent:msg", payload };
+    child.send(msg as AnyEvent as never);
+  }
+
+  /** Internal: called synchronously by a child when its done settles. */
+  childExited(name: string, result: DoneResult): void {
+    this.children.delete(name);
+    const ev: ChildExit = {
+      type: "child:exit",
+      from: name,
+      outcome: result.outcome,
+      reason: result.reason,
+    };
+    this.send(ev as AnyEvent as Ev);
+  }
+
+  /**
+   * Internal: forced teardown (design §6) — no onShutdown, no grace.
+   * Cancels everything, force-stops descendants, settles done as
+   * aborted "force-stopped".
+   */
+  forceStop(): void {
+    if (this.phase === "done") return;
+    this.phase = "terminating";
+    this.inbox.length = 0;
+    this.pendingQ.clear();
+    this.timers.cancelAll();
+    this.tasks.cancelAll();
+    for (const child of [...this.children.values()]) child.forceStop();
+    this.children.clear();
+    this.record(
+      this.stateName,
+      TERMINAL_STATES.aborted,
+      undefined,
+      "force-stopped",
+    );
+    this.stateName = TERMINAL_STATES.aborted;
+    this.completeFinalize("aborted", "force-stopped", undefined);
+  }
+
   /** The state's `after` timer fired (spec §3.2). */
   private fireAfter(spec: InternalAfter): void {
     if (this.phase !== "running") return;
@@ -349,7 +521,7 @@ export class MachineInstance<
 
   private finalize(outcome: Outcome, reason?: string, ev?: AnyEvent): void {
     if (this.phase !== "running") return;
-    this.phase = "done";
+    this.phase = "terminating";
     const terminal = TERMINAL_STATES[outcome];
     this.inbox.length = 0;
     this.pendingQ.clear();
@@ -357,7 +529,50 @@ export class MachineInstance<
     this.stateName = terminal;
     this.timers.cancelAll();
     this.tasks.cancelAll();
-    // M4 adds child teardown here.
+    if (this.children.size === 0) {
+      // The common path stays fully synchronous (design §4.9).
+      this.completeFinalize(outcome, reason, ev);
+      return;
+    }
+    void this.shutdownChildren().then(() =>
+      this.completeFinalize(outcome, reason, ev),
+    );
+  }
+
+  /**
+   * Shut live children down cooperatively, force-stop stragglers after
+   * the grace period (spec §8.1, design §6).
+   */
+  private async shutdownChildren(): Promise<void> {
+    const kids = [...this.children.values()];
+    for (const child of kids) void child.shutdown("parent terminated");
+    const allDone = Promise.all(kids.map((c) => c.done)).then(
+      () => "done" as const,
+    );
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    const grace = new Promise<"grace">((resolve) => {
+      graceTimer = setTimeout(() => resolve("grace"), this.graceMs);
+    });
+    const winner = await Promise.race([allDone, grace]);
+    clearTimeout(graceTimer);
+    if (winner === "grace") {
+      for (const child of [...this.children.values()]) child.forceStop();
+    }
+    this.children.clear();
+  }
+
+  /**
+   * Last stage of any teardown (§8.3 order): cleanup, then the final
+   * notification, then done settles. Idempotent — a forceStop racing a
+   * graceful teardown completes only once.
+   */
+  private completeFinalize(
+    outcome: Outcome,
+    reason: string | undefined,
+    ev: AnyEvent | undefined,
+  ): void {
+    if (this.phase === "done") return;
+    this.phase = "done";
     try {
       this.def.cleanup?.(this.ctx);
     } catch (err) {
@@ -365,6 +580,10 @@ export class MachineInstance<
     }
     this.notify(ev, reason);
     this.doneResolve({ outcome, reason });
+    this.parentLink?.parent.childExited(this.parentLink.name, {
+      outcome,
+      reason,
+    });
   }
 
   // ---- plumbing -------------------------------------------------------------
