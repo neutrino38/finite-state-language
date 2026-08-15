@@ -5,7 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/)
 (everything below 0.2 is `@experimental` — the API is still soft).
 
-## [Unreleased]
+## [0.1.0] — 2026-08-15
+
+First public release. Everything below 0.2 is experimental: the API is
+still soft, and real-world use (the JsSIP web-phone project) is the
+pressure test before freezing.
 
 ### Added
 
