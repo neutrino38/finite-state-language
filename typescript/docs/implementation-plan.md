@@ -23,7 +23,8 @@ one delivers something usable.
   test/
   ```
 - CI (GitHub Actions): node LTS matrix, build + test + lint.
-- Licence choice (suggestion: MIT or Apache-2.0 — to be confirmed).
+- ~~Licence choice~~ settled: Apache-2.0 (LICENSE at repo root; `"license":
+  "Apache-2.0"` in package.json).
 
 Exit: `npm run build && npm test` green on an empty API.
 

@@ -121,4 +121,4 @@ fully operational. We'd love to have you — *no state secrets here*.
 
 ## License
 
-TBD (MIT or Apache-2.0 — to be settled before first release).
+[Apache License 2.0](LICENSE).
