@@ -1,9 +1,39 @@
 /**
  * finite-state-language — public API.
  *
- * M0 scaffold: the API surface is intentionally empty; the core runtime
- * (defineMachine, transitions, instance) lands in M1.
- * See docs/design.md for the full software design.
+ * See ../docs/design.md for the software design and
+ * ../../spec/fsl-js-ts.md for the language specification.
  */
+
+export { defineMachine } from "./core/define.js";
+export {
+  goto,
+  next,
+  loop,
+  stay,
+  success,
+  failure,
+  aborted,
+  type Transition,
+} from "./core/transition.js";
+export { TERMINAL_STATES } from "./core/types.js";
+export type {
+  AnyEvent,
+  DoneResult,
+  Fx,
+  Handler,
+  Instance,
+  Listener,
+  Machine,
+  MachineDef,
+  OnMap,
+  Outcome,
+  Snapshot,
+  StartOpts,
+  StateDef,
+  TerminalStateName,
+  TransitionNotification,
+} from "./core/types.js";
+export type { LogEntry } from "./core/log.js";
 
 export const VERSION = "0.0.0";

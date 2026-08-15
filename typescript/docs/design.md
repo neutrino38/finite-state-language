@@ -83,23 +83,34 @@ defineMachine<PhoneCtx, PhoneEvent>({ ... })
 ```
 
 TypeScript has all-or-nothing type-argument inference: if `Ctx` and `Ev` are
-given explicitly, `S` cannot also be inferred from the literal. Since typed
-`goto` (the "single biggest robustness win", spec §1.1) requires inferring
-`S`, `defineMachine` is **curried**:
+given explicitly, the state names cannot also be inferred from the literal.
+Since typed `goto` (the "single biggest robustness win", spec §1.1) requires
+that inference, `defineMachine` is **curried**:
 
 ```ts
 export function defineMachine<Ctx, Ev extends AnyEvent>():
-  <S extends StatesShape<Ctx, Ev, S>>(def: MachineDef<Ctx, Ev, S>) => Machine<Ctx, Ev, StateNames<S>>;
+  <SN extends string>(def: MachineDef<Ctx, Ev, SN>) => Machine<Ctx, Ev, SN>;
 
 // usage — one extra pair of parens vs the spec:
 export const WebPhone = defineMachine<PhoneCtx, PhoneEvent>()({ ... });
 ```
 
-The self-referential constraint `S extends StatesShape<Ctx, Ev, S>` is the
-standard recursive-inference trick: handler return types inside `S` are
-expressed in terms of `keyof S`, so `goto("connectd")` fails to unify.
-This is a deliberate, minimal deviation from the spec example (recorded in
-§11.1).
+The inferred parameter is `SN`, the union of state names, with
+`states: Record<SN, StateDef<Ctx, Ev, SN>>`: TypeScript infers a mapped
+type's key parameter from the literal's keys. Two implementation findings
+(discovered in M1, replacing the earlier recursive-constraint idea):
+
+- a self-referential constraint `S extends Record<string, StateDef<…,
+  keyof S>>` does **not** work — `keyof S` resolves to `never` while the
+  handlers are contextually typed;
+- every SN use-site inside `StateDef` (handler returns, string
+  shorthands) must be wrapped in `NoInfer<SN>`, because return-position
+  inference outranks mapped-type key inference: without it,
+  `goto("typo")` would silently widen SN instead of failing to compile.
+
+With both in place, `goto("connectd")` and a shorthand routing to an
+unknown state are compile errors already in M1; M2 adds the type-level
+test suite around this.
 
 ### 3.3 Transitions as tagged values
 
@@ -146,12 +157,12 @@ interface StateDef<Ctx, Ev extends AnyEvent, SN extends string> {
   meta?: Record<string, unknown>;
 }
 
-interface MachineDef<Ctx, Ev extends AnyEvent, S> {
+interface MachineDef<Ctx, Ev extends AnyEvent, SN extends string> {
   name: string;
   context: () => Ctx;
-  states: S;                       // must contain key "initial_state"
-  pending?: { max?: number };      // default 32 (spec §4.2)
-  onShutdown?: (ctx: Ctx, fx: Fx<Ev, StateNames<S>>) => Transition<StateNames<S>> | void;
+  states: Record<SN, StateDef<Ctx, Ev, SN>>;  // must contain "initial_state"
+  pending?: { max?: number };                 // default 32 (spec §4.2)
+  onShutdown?: (ctx: Ctx, fx: Fx<Ev, SN>) => Transition<SN> | void;
   cleanup?: (ctx: Ctx) => void;
 }
 ```
@@ -295,23 +306,25 @@ enterState(target, desc?, redispatch?):
   timers.onExit()                    // cancel after-timer + non-sticky delays
   prev = stateName; stateName = target
   translog.push(prev, target, currentEvent, desc)
+  notifySubscribers()                // on entry, before enter runs
   t = guard(() => states[target].enter?.(ctx, makeFx()))
-  if t is a transition:              // e.g. initial_state returning goto
+  if t is goto/next/loop/final:      // e.g. initial_state returning goto
     applyTransition(t); return       // deeper entry owns the rest
+  // stay/void from enter are equivalent: the entry already notified
   timers.armAfter(states[target].after)
-  notifySubscribers()                // one notification per transition
   replayPending()                    // spec §4.2 — before any new event
   if redispatch: dispatch(redispatch)
 ```
 
 Ordering rationale:
 
+- Subscribers are notified **at entry, before `enter` runs**: the machine
+  *is* in the state while `enter` executes, and each intermediate hop of a
+  synchronous chain (`initial_state → registering`) notifies, so the
+  transition log and the subscriber stream agree.
 - `enter` runs **before** `after` is armed, so an `enter` that immediately
   transitions never leaks a timer.
-- Subscribers are notified per transition — including each intermediate hop
-  of a synchronous chain (`initial_state → registering`), so the transition
-  log and the subscriber stream agree.
-- Pending replay happens after notification and before the inbox drain
+- Pending replay happens after `enter` completes and before the inbox drain
   resumes — "on every state entry, before any new event is taken" (spec §4.2).
 
 ### 4.5 The pending queue (selective receive, spec §4.2)

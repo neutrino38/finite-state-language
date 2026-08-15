@@ -107,7 +107,7 @@ service, the pun has done its job.
 
 - [x] Goals & language specification
 - [x] Implementation plan
-- [ ] Core runtime
+- [x] Core runtime (event loop, transitions, selective receive)
 - [ ] React adapter
 - [ ] JsSIP web-phone example
 - [ ] `finite-state-language@0.1.0` on npm
