@@ -612,6 +612,28 @@ assert `done`), for service-side call-flow description, or on any JS runtime.
 Nothing in this spec may break that property. Deliberate non-goals for v1:
 distribution, persistence/rehydration, BEAM-style supervision.
 
+**There is deliberately no Node adapter.** An adapter exists to bind the
+machine to a framework's *render cycle* (that is all `fsl/react` does); Node
+has no render cycle, so the core API *is* the Node API:
+
+```ts
+const call = CallFlow.start({ args: { callee } });
+ws.on("message", m => call.send(parseEvent(m)));
+call.subscribe(({ state }) => logger.info(state));
+const outcome = await call.done;      // like Elixip run/0: success | failure | aborted
+```
+
+What a backend *will* eventually need is not adaptation but **supervision** —
+what OTP gives Elixip for free: a service runs one machine instance per
+call/session, and a `SIGTERM` must broadcast cooperative `shutdown()` to every
+live instance (each `onShutdown` sends its BYE) before the process exits —
+the equivalent of `elixipp`'s graceful stop broadcasting
+`{:scenario_ctl, :shutdown}` to all active calls. When backend becomes a
+priority, this becomes a `finite-state-language/node` module (instance
+registry + signal-driven graceful shutdown; an EventEmitter→`send` binding is
+trivial app code and may tag along). Out of scope for v1, recorded here so
+the reasoning is not lost.
+
 **Phoenix LiveView** was studied and deliberately left out of FSL/TS:
 LiveView events are delivered server-side, so that adapter belongs to Elixip
 (see `elixip/docs/design/liveview-adapter.md`). FSL/TS's role in a LiveView
