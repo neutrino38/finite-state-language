@@ -110,7 +110,17 @@ type's key parameter from the literal's keys. Two implementation findings
 
 With both in place, `goto("connectd")` and a shorthand routing to an
 unknown state are compile errors already in M1; M2 adds the type-level
-test suite around this.
+test suite around this, plus a type-level `initial_state` requirement
+(an intersection on the `def` parameter, which adds no SN inference
+site).
+
+Ctx and Ev carry defaults (`Record<string, any>` / `AnyEvent`) so plain
+JavaScript gets two tiers (validated by the M2 `checkJs` fixture):
+
+- zero-effort: `defineMachine()({ ... })` — loose context and events,
+  state names still checked;
+- typed: `/** @type {typeof defineMachine<Ctx, Ev>} */ (defineMachine)`
+  with `@typedef` — the full TS experience from JSDoc.
 
 ### 3.3 Transitions as tagged values
 

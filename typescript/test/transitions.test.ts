@@ -254,6 +254,8 @@ describe("§3.1 definition validation", () => {
       defineMachine<Record<string, never>, Ev>()({
         name: "T",
         context: () => ({}),
+        // @ts-expect-error — initial_state is required at the type level
+        // too; this exercises the runtime guard for plain-JS consumers
         states: { lonely: {} },
       }),
     ).toThrow(/initial_state/);

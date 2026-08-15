@@ -29,9 +29,20 @@ import { MachineInstance, type InternalDef } from "./instance.js";
 
 const RESERVED = new Set<string>(Object.values(TERMINAL_STATES));
 
-export function defineMachine<Ctx, Ev extends AnyEvent>() {
+// The defaults are the zero-effort JavaScript tier (spec §1.1): a JS
+// consumer calling defineMachine() bare still gets typed state names,
+// while ctx/events stay loose. TS consumers pass Ctx and Ev explicitly.
+export function defineMachine<
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Ctx = Record<string, any>,
+  Ev extends AnyEvent = AnyEvent,
+>() {
   return <SN extends string>(
-    def: MachineDef<Ctx, Ev, SN>,
+    // The intersection requires `initial_state` at compile time without
+    // adding an inference site for SN (the Record keys stay the only one).
+    def: MachineDef<Ctx, Ev, SN> & {
+      states: { initial_state: StateDef<Ctx, Ev, NoInfer<SN>> };
+    },
   ): Machine<Ctx, Ev, SN> => {
     if (typeof def.name !== "string" || def.name.length === 0) {
       throw new TypeError("defineMachine: 'name' must be a non-empty string");

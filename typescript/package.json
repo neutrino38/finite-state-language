@@ -46,7 +46,8 @@
     "test:watch": "vitest",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
-    "check:zero-deps": "node scripts/check-zero-deps.mjs"
+    "check:zero-deps": "node scripts/check-zero-deps.mjs",
+    "check:js-consumer": "tsc -p test/js-consumer/tsconfig.json"
   },
   "peerDependencies": {
     "react": ">=18"
