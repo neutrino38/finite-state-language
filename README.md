@@ -77,6 +77,34 @@ Read the full picture in [spec/fsl-js-ts.md](spec/fsl-js-ts.md) and the
 roadmap in
 [typescript/docs/implementation-plan.md](typescript/docs/implementation-plan.md).
 
+## Using it
+
+Vanilla JavaScript — subscribe and render:
+
+```js
+const phone = WebPhone.start();
+bindSipStack(phone); // stack callbacks -> phone.send(...)
+callButton.onclick = () =>
+  phone.send({ type: "ui:call", number: input.value });
+phone.subscribe(({ state }) => renderUi(state));
+```
+
+React — one hook, no other coupling:
+
+```tsx
+import { useMachine } from "finite-state-language/react";
+
+function Phone() {
+  const { state, send } = useMachine(WebPhone);
+  return (
+    <CallButton
+      disabled={state !== "ready"}
+      onClick={() => send({ type: "ui:call", number })}
+    />
+  );
+}
+```
+
 ## Repository layout
 
 FSL is a language first, an implementation second — this repository is
@@ -108,8 +136,10 @@ service, the pun has done its job.
 - [x] Goals & language specification
 - [x] Implementation plan
 - [x] Core runtime (event loop, transitions, selective receive)
-- [ ] React adapter
-- [ ] JsSIP web-phone example
+- [x] Timers, tasks (the Valet pattern) & HTTP-as-events
+- [x] Sub-machines & cooperative shutdown
+- [x] React adapter
+- [ ] JsSIP web phone — full example, as its own project
 - [ ] `finite-state-language@0.1.0` on npm
 
 ## Get involved

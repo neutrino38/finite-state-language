@@ -79,17 +79,19 @@ Exit: Elixip-style `after 30_000 -> failure` and `http_GET`-style flows work
 
 Exit: spec §8 examples pass.
 
-## M5 — Adapters & flagship example
+## M5 — React adapter
 
 - `fsl/react`: `useMachine` on `useSyncExternalStore`, instance ownership
   (start on mount, shutdown on unmount), StrictMode double-mount safety.
-- Example app `examples/webphone-jssip`: a minimal but real web phone
-  (register / call / answer / hangup) with a ~50-line JsSIP→FSL binding,
-  built with Vite. This is the acceptance test of the whole design:
-  the machine file must read like the Elixip scenario reads.
 - Vanilla-JS example (a few lines in the README).
+- ~~Example app `examples/webphone-jssip`~~ — promoted to a standalone
+  project (own repository), decided 2026-08-15: a minimal but real web
+  phone (register / call / answer / hangup) with a ~50-line JsSIP→FSL
+  binding, built with Vite. It remains the acceptance test of the whole
+  design — the machine file must read like the Elixip scenario reads —
+  but as a consumer of the published package, not a directory here.
 
-Exit: `npm run dev` in the example shows a working UI driven by the machine.
+Exit: the adapter test suite is green, including StrictMode.
 
 ## M6 — Observability & docs
 
