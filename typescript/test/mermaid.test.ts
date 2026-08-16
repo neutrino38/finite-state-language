@@ -39,9 +39,10 @@ describe("§6.1 toMermaid — static structure export", () => {
     expect(lines[0]).toBe("stateDiagram-v2");
     const decls = lines.filter((l) => l.startsWith("  state "));
     expect(decls).toEqual([
+      // `initial_state` only has an `enter`, so nothing to describe
       "  state initial_state",
-      "  state registering",
-      "  state ready",
+      '  state "registering" as registering',
+      '  state "ready" as ready',
       "  state call_failed",
     ]);
     expect(lines).toContain("  [*] --> initial_state");
@@ -51,15 +52,34 @@ describe("§6.1 toMermaid — static structure export", () => {
     expect(lines).toContain("  call_failed --> ready: ui:call");
   });
 
-  it("summarizes opaque handlers and after in a per-state note", () => {
-    const i = lines.indexOf("  note right of registering");
-    expect(i).toBeGreaterThan(-1);
-    expect(lines.slice(i, i + 4)).toEqual([
-      "  note right of registering",
-      "    on: sip:registered, sip:ended",
-      "    after 30000 ms",
-      "  end note",
+  it("summarizes opaque handlers and after in the state description", () => {
+    const own = lines.filter((l) => l.startsWith("  registering : "));
+    expect(own).toEqual([
+      "  registering : on: sip:registered, sip:ended",
+      "  registering : after 30000 ms",
     ]);
+  });
+
+  /**
+   * Regression: mermaid 11 (GitHub, mermaid.live) throws "No such shape:
+   * undefined" on a `note` attached to a state that appears in no
+   * transition — the common case, since handlers are opaque closures.
+   */
+  it("never emits notes, and keeps described states named", () => {
+    const closuresOnly = defineMachine<Record<string, never>, Ev>()({
+      name: "NoEdges",
+      context: () => ({}),
+      states: {
+        initial_state: { on: { "sip:registered": () => goto("waiting") } },
+        waiting: { on: { "ui:call": () => stay() } },
+      },
+    });
+    const out2 = closuresOnly.toMermaid();
+    expect(out2).not.toContain("note");
+    // every described state keeps a declaration carrying its own label
+    expect(out2).toContain('  state "initial_state" as initial_state');
+    expect(out2).toContain('  state "waiting" as waiting');
+    expect(out2).toContain("  waiting : on: ui:call");
   });
 
   it("aliases state names that are not identifier-safe", () => {

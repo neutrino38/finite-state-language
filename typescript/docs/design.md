@@ -605,11 +605,22 @@ nothing in the core is React-aware.
   shorthands, (b) `next` adjacency is *not* guessed, (c) nothing else.
   Emitted graph: all states in declaration order, terminal states styled,
   one labelled edge per string shorthand, and for every state with
-  non-shorthand handlers a single dashed self-annotation listing its event
-  types. The dynamic trace (transition log) is the tool for actual paths.
-  The spec's "declared gotos" phrasing over-promises for v1 — recorded in
-  §11.7. If richer diagrams prove needed, a `meta.transitions` hint is the
-  escape hatch, not source parsing.
+  non-shorthand handlers or an `after` a *description* (`state : line`)
+  listing its event types and delay. The dynamic trace (transition log) is
+  the tool for actual paths. The spec's "declared gotos" phrasing
+  over-promises for v1 — recorded in §11.7. If richer diagrams prove
+  needed, a `meta.transitions` hint is the escape hatch, not source
+  parsing.
+
+  Descriptions rather than `note` blocks, deliberately: mermaid 11 (the
+  renderer behind GitHub and mermaid.live) aborts the whole diagram with
+  "No such shape: undefined" when a note is attached to a state that
+  appears in no transition. That is the *normal* case here — a machine
+  whose handlers are all closures has no extractable edges at all, so
+  every note would sit on an edgeless state. A described state is also
+  declared in the quoted form (`state "x" as x`): mermaid drops a bare
+  `state x` declaration's own label as soon as a description is attached,
+  which would print the summary and lose the state name.
 
 ---
 

@@ -140,7 +140,7 @@ service, the pun has done its job.
 - [x] Sub-machines & cooperative shutdown
 - [x] React adapter
 - [ ] JsSIP web phone — full example, as its own project
-- [x] `finite-state-language@0.1.0` on npm
+- [x] `finite-state-language@0.1.1` on npm
 
 ## Get involved
 

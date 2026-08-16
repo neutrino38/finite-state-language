@@ -5,6 +5,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/)
 (everything below 0.2 is `@experimental` — the API is still soft).
 
+## [0.1.1] — 2026-08-16
+
+Documentation fix, no runtime behaviour change. Only the text produced by
+`Machine.toMermaid()` differs; if you have generated diagrams checked in,
+regenerate them.
+
+### Fixed
+
+- **`toMermaid()` output now renders on GitHub.** The per-state summary
+  is emitted as a state description (`state : on: …`) instead of a
+  `note … end note` block. Mermaid 11 — the renderer behind GitHub and
+  mermaid.live — aborts the whole diagram with "No such shape:
+  undefined" when a note is attached to a state that appears in no
+  transition, which is the normal case for a machine whose handlers are
+  all closures (no extractable edges at all). Described states are now
+  declared in the quoted form (`state "x" as x`) so they keep their name
+  next to the summary: mermaid replaces a bare `state x` declaration's
+  own label as soon as a description is attached, which used to drop the
+  state name from the picture. States without a summary keep the short
+  `state x` form, and the emitted statements are now grouped
+  (declarations, initial edge, transitions, descriptions).
+
 ## [0.1.0] — 2026-08-15
 
 First public release. Everything below 0.2 is experimental: the API is

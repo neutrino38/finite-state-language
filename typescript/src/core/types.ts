@@ -245,8 +245,8 @@ export interface Machine<Ctx, Ev extends AnyEvent, SN extends string = string> {
   /**
    * Static structure export for documentation (spec §6.1): every state
    * in declaration order, string-shorthand transitions as edges, and a
-   * per-state note with the listened events and the `after` delay.
-   * Handler-internal gotos are closures and are deliberately not
+   * per-state description with the listened events and the `after`
+   * delay. Handler-internal gotos are closures and are deliberately not
    * extracted — the transition log is the dynamic trace.
    */
   toMermaid(): string;

@@ -1,6 +1,6 @@
 {
   "name": "finite-state-language",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "FSL — a tiny, readable finite-state language for stateful communication frontends",
   "license": "Apache-2.0",
   "type": "module",
