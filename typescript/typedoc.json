@@ -1,6 +1,11 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  "entryPoints": ["src/index.ts", "src/http/index.ts", "src/react/index.ts"],
+  "entryPoints": [
+    "src/index.ts",
+    "src/http/index.ts",
+    "src/react/index.ts",
+    "src/diagram/index.ts"
+  ],
   "out": "docs/api",
   "name": "finite-state-language",
   "includeVersion": true,

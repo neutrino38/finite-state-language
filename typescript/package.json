@@ -1,6 +1,6 @@
 {
   "name": "finite-state-language",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "FSL — a tiny, readable finite-state language for stateful communication frontends",
   "license": "Apache-2.0",
   "type": "module",
@@ -38,6 +38,10 @@
     "./react": {
       "types": "./dist/react/index.d.ts",
       "import": "./dist/react/index.js"
+    },
+    "./diagram": {
+      "types": "./dist/diagram/index.d.ts",
+      "import": "./dist/diagram/index.js"
     }
   },
   "scripts": {
@@ -52,10 +56,14 @@
     "docs": "typedoc"
   },
   "peerDependencies": {
-    "react": ">=18"
+    "react": ">=18",
+    "typescript": ">=5"
   },
   "peerDependenciesMeta": {
     "react": {
+      "optional": true
+    },
+    "typescript": {
       "optional": true
     }
   },

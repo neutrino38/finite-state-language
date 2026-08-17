@@ -22,6 +22,9 @@ connected, failed, and every state in between.
   ordered teardown.
 - **Framework-thin.** `finite-state-language/react` is one hook on
   `useSyncExternalStore`; vanilla JS just subscribes.
+- **Diagrams that match the code.** `finite-state-language/diagram`
+  reads a machine's source and draws its real transition graph, so
+  checked-in documentation cannot drift away from the machine.
 
 FSL is the TypeScript sibling of the DSL at the heart of
 [Elixip](https://github.com/neutrino38/elixip), an Elixir SIP framework
@@ -105,6 +108,38 @@ const define = /** @type {typeof defineMachine<Ctx, Ev>} */ (defineMachine);
 const M = define()({/* state names, events and context are all checked */});
 ```
 
+## Diagrams
+
+Two exports draw a machine, and they see different things.
+
+`Machine.toMermaid()` works at runtime, where handlers are closures. It
+can only extract the string shorthand `on: { evt: "target" }`, so a
+machine whose handlers all return `goto(…)` prints as a bare list of
+states. It costs nothing and needs no tooling — good enough for a quick
+look in a debug console.
+
+`finite-state-language/diagram` reads the source instead, where every
+`goto("ready")` names its target in plain text. It is a build-time tool:
+it needs `typescript` installed (an optional peer dependency), and the
+core keeps its zero runtime dependencies.
+
+```ts
+import { readFileSync, writeFileSync } from "node:fs";
+import { machineGraphs, renderMermaid } from "finite-state-language/diagram";
+
+const [phone] = machineGraphs(readFileSync("src/phone.ts", "utf8"));
+writeFileSync("docs/phone.mmd", renderMermaid(phone));
+```
+
+A graph also carries `states`, `edges`, and two lists worth printing
+beside the picture: `forwarded` (events handed to a child machine with
+`fx.notify`) and `consumed` (events a state handles without moving).
+
+The extraction over-approximates on purpose: guards are ignored, so a
+handler that can reach two targets draws two edges. Only string-literal
+descriptions become labels. Run it from a test that fails when the
+checked-in diagram and the source disagree, and the two cannot drift.
+
 ## Documentation
 
 - [Language specification](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md)
@@ -112,8 +147,8 @@ const M = define()({/* state names, events and context are all checked */});
 - [Software design](https://github.com/neutrino38/finite-state-language/blob/main/typescript/docs/design.md)
   — how the runtime works inside.
 - API reference: `npm run docs` (typedoc) generates `docs/api`.
-- `Machine.toMermaid()` prints the static state graph; start with
-  `{ debug: true }` for an Elixip-style transition log.
+- Start an instance with `{ debug: true }` for an Elixip-style
+  transition log.
 
 ## License
 

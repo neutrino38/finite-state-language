@@ -5,6 +5,7 @@ export default defineConfig({
     index: "src/index.ts",
     "http/index": "src/http/index.ts",
     "react/index": "src/react/index.ts",
+    "diagram/index": "src/diagram/index.ts",
   },
   format: ["esm"],
   dts: true,

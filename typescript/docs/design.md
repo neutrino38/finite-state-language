@@ -51,6 +51,8 @@ src/
     index.ts          httpGet + HttpResult (subpath export, spec §4.4)
   react/
     index.ts          useMachine (subpath export, spec §7.1)
+  diagram/
+    index.ts          source-level graph extraction (subpath export, spec §6.1)
 test/
   …                   one file per spec section (see §10)
 ```
@@ -607,10 +609,7 @@ nothing in the core is React-aware.
   one labelled edge per string shorthand, and for every state with
   non-shorthand handlers or an `after` a *description* (`state : line`)
   listing its event types and delay. The dynamic trace (transition log) is
-  the tool for actual paths. The spec's "declared gotos" phrasing
-  over-promises for v1 — recorded in §11.7. If richer diagrams prove
-  needed, a `meta.transitions` hint is the escape hatch, not source
-  parsing.
+  the tool for actual paths.
 
   Descriptions rather than `note` blocks, deliberately: mermaid 11 (the
   renderer behind GitHub and mermaid.live) aborts the whole diagram with
@@ -621,6 +620,39 @@ nothing in the core is React-aware.
   declared in the quoted form (`state "x" as x`): mermaid drops a bare
   `state x` declaration's own label as soon as a description is attached,
   which would print the summary and lose the state name.
+
+- **`diagram/` — the graph read from the source.** The runtime exporter
+  above is blind by construction, and on a real machine that means a
+  picture with no arrows at all. The escape hatch first considered was a
+  `meta.transitions` hint on each state; the web-phone project showed why
+  it is the wrong one. It writes every target twice — once in `goto`, once
+  in `meta` — and the copy rots with no way to detect it. The source is
+  already the single statement of truth: `goto("ready")` names its target
+  in plain text. So this module parses it.
+
+  Input is source text and the output is data (`states`, `edges`,
+  `forwarded`, `consumed`, plus `renderMermaid` for the picture): no
+  filesystem access, one pure function, testable against string fixtures.
+  It ships as the `diagram` subpath because it imports `typescript` — an
+  optional peer dependency, external to the bundle, so the core keeps its
+  zero runtime dependencies (§1.4).
+
+  What the walk resolves: `goto` targets, `stay`/`loop` as self edges,
+  terminal constructors as edges to `[*]`, and `next()` through
+  declaration order — including the last state, where the runtime settles
+  with a failure instead (§11.7). Calls to module-level helper functions
+  are followed one name at a time, guarded against recursion, because a
+  shared `fail(ctx)` holds real targets. Two lists come out beside the
+  graph: events a state forwards to a child (`fx.notify`) and events it
+  merely consumes — the difference matters, since "consumed" on a
+  forwarded event reads as "does nothing".
+
+  The limits are deliberate and stated in the module header: guards are
+  ignored, so the graph over-approximates (a handler reaching two targets
+  draws two edges); only string-literal descriptions become labels; a
+  target reached through a method or an imported function is not seen.
+  Over-approximation is the safe direction for documentation — a drawn
+  edge that cannot fire is visible, a missing edge is not.
 
 ---
 
@@ -664,9 +696,10 @@ Decisions made here that the spec should absorb in its next revision:
 6. **`onShutdown` may return a non-terminal transition**: the machine
    continues toward a graceful end; the parent's grace period (or the
    caller's patience on `done`) is the backstop.
-7. **`toMermaid()` v1 extracts string-shorthand edges only**; handler-internal
-   `goto`s are not statically recoverable without source analysis
-   (a non-goal). Spec §6.1 should be softened accordingly.
+7. **`toMermaid()` extracts string-shorthand edges only**; handler-internal
+   `goto`s are unreachable from the live definition. Source analysis, first
+   ruled a non-goal, is now the answer: the `diagram` subpath does it at
+   build time (§9). `toMermaid()` keeps its runtime-only scope.
 8. **Terminal states**: the `aborted` outcome lands in a third predeclared
    state name, `terminal_aborted_state`, reserved like the other two
    (spec §3.1 lists only two names but three outcomes).

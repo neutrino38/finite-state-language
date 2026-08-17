@@ -46,6 +46,8 @@ finite-state-language/http      optional: HTTP requests as events (§4.4) — no
                                 dependency either (standard fetch)
 finite-state-language/react     adapter: one hook (optional react peerDependency)
 finite-state-language/vue       adapter: one composable (later)
+finite-state-language/diagram   build tool: the graph read from the source
+                                (§6.1) — optional typescript peerDependency
 ```
 
 - The **core is a pure JS library**: it needs nothing but standard timers and
@@ -76,6 +78,12 @@ A ~50-line binding file per stack (one is provided as an example for
 
 Runtime dependencies of the core: **none**. Dev dependencies (compiler,
 bundler, test runner) must be mainstream, maintained, and security-clean.
+
+A subpath may declare an **optional peer dependency** when what it does
+cannot be done without one — `react` for the adapter, `typescript` for
+the diagram tool. It stays optional and external to the bundle: a
+consumer who never imports that subpath installs nothing extra, and the
+core keeps its zero-dependency promise.
 
 ---
 
@@ -518,10 +526,17 @@ sub-FSMs and of external configuration for top machines.
 
 - `debug: true` logs every transition as `event: (old) -> (new) "desc"` —
   same format as Elixip.
-- `Machine.toMermaid()` renders the **static** graph (states + transition
-  targets extractable from `on` string-shorthands and declared gotos) for
-  documentation; the transition log gives the **dynamic** trace. Readability
-  is a feature: a machine you can print is a machine you can review.
+- `Machine.toMermaid()` renders the **static** graph at runtime. Handlers
+  are closures there, so the only targets it can extract are the `on`
+  string-shorthands; every other state is printed with a summary of the
+  events it listens to.
+- The **`diagram` module** renders the same graph from the machine's
+  source, where every `goto` names its target. It recovers the real
+  edges, resolves `next()` through declaration order, and reports the
+  events a state consumes or forwards to a child. It is a build-time
+  tool: it parses TypeScript, so it lives outside the runtime.
+- The transition log gives the **dynamic** trace. Readability is a
+  feature: a machine you can print is a machine you can review.
 
 ---
 
