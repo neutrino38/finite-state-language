@@ -245,7 +245,8 @@ function Phone() {
 | `scenario_aborted("r")`     | `return aborted("r")` / cooperative shutdown  |
 | `sip_ctx` + `appdata_*`     | typed `ctx` (whole context is user-defined)   |
 | process mailbox             | machine event queue (see §6.3)                |
-| `sub_fsm / notify`          | `fx.spawn / fx.notify / fx.notifyParent`      |
+| `spawn_fsm / notify`        | `fx.spawn / fx.notify / fx.notifyParent`      |
+| `sbb_fsm / sbb_return`      | `fx.sbb / fx.sbbReturn` (reserved, §8.4)      |
 | `on_shutdown`               | `onShutdown` hook                             |
 | `cleanup/1`                 | `cleanup(ctx)` hook                           |
 | `Valet.ask/4`               | `fx.task(work, tag, {timeout})`               |
@@ -617,6 +618,74 @@ shuts down children, then calls `cleanup(ctx)` if defined — the place to
 `ua.stop()`, close PeerConnections, release media. Only then does
 `done` settle and do subscribers get the final notification.
 
+### 8.4 Service Building Blocks — reserved, not implemented
+
+**Status: names reserved, contract fixed, no code.** Recorded here for the same
+reason as the Node supervision of §9: the design exists, it is being built on
+the Elixir side first, and the one thing that must not happen twice is the
+naming. See
+[`elixip/docs/design/service-building-block.md`](https://github.com/neutrino38/elixip/blob/master/docs/design/service-building-block.md),
+whose §4.6 holds the shared vocabulary table for both dialects.
+
+A **Service Building Block** is a reusable fragment of a state machine behind a
+callable face: a sequence written once — establish a call, run a menu, collect
+credentials — that a host machine invokes and observes through a handful of
+service-level events. The lineage is JAIN SLEE's building blocks; the everyday
+comparison is Asterisk's `Dial()`, one call hiding a state machine somebody
+else got right.
+
+**It is a subroutine call, not a second actor.** That is the whole difference
+with `fx.spawn` (§8.1), and the frontier is worth stating in one line:
+
+> **`fx.spawn` when the other machine has state of its own; `fx.sbb` when the
+> sequence belongs to the state you already hold.**
+
+`fx.spawn` starts an *actor*: a second machine, concurrent, addressed by
+messages, outliving the state that spawned it — Trix's `CallMachine`, which
+owns the `RTCSession` handed to it. `fx.sbb` calls a *subroutine*: no second
+machine, no concurrency, the caller suspended at the call site until it
+returns.
+
+The contract, in the terms this engine already uses:
+
+```ts
+enter(ctx, fx) {
+  fx.sbb(EstablishCall, { args: { dest } });   // this machine enters that one
+},
+on: {
+  "call:connected": (ev) => goto("connected", ev.uri),
+  "call:rejected":  (ev) => goto("failed", `${ev.code}`),
+},
+```
+
+- **a stack of definitions, not a stack of instances.** The instance keeps a
+  stack; events are offered to the definition on top. Unmatched ones fall into
+  the **pending queue exactly as today** (§4.2) — nothing about §4.2 changes,
+  which is the point of choosing this shape;
+- **`fx.sbbReturn(ev)`** pops the stack and sends `ev`, handing control back to
+  the host state as a `stay()`: the host's `enter` does not re-run and its
+  `after` is not re-armed. The final event is **not** privileged — anything the
+  SBB left pending is replayed first, in arrival order;
+- **returning is mandatory.** An SBB branch ends on `fx.sbbReturn` or on a
+  terminal;
+- **terminals propagate.** `failure(...)` / `aborted(...)` inside an SBB keep
+  their ordinary meaning and unwind the *whole* stack, host included — the
+  `exit()` of C. `success()` is not the way back: `fx.sbbReturn` is. (On the
+  Elixir side that distinction was not cosmetic — the first fragment slated to
+  become an SBB ends five of its six branches on `aborted(...)` as a perfectly
+  normal outcome, so reusing it for the return would have turned a clean ending
+  into a host kill on the first try.)
+- **the host's `after` is suspended** while an SBB runs; the SBB carries its own
+  deadline. Two concurrent deadlines have no arbiter;
+- **SBBs compose** — a plain call stack — but two of them cannot run
+  *concurrently*: they nest, or they follow each other.
+
+In JavaScript this is cheaper than on the BEAM, where the sub-machine is a
+nested `receive` and a propagating terminal has to be thrown: here the stack is
+data and unwinding it is a `while` loop. What TS is **not** expected to
+support, and what is a missing concept rather than a divergence: spawning a
+machine by file path, and anything that reads an inbound SIP dialog.
+
 ---
 
 ## 9. Backend usage (non-priority, kept honest)
@@ -669,6 +738,8 @@ service is browser-side only: the media machine inside a `phx` hook
 | Error channel | `lasterr` checked by `goto` | exceptions ⇒ `failure` | idiomatic TS |
 | Pattern matching | full Elixir patterns | `event.type` dispatch + plain TS in the handler | keep the DSL small |
 | SIP helpers | `SIP.Session.*` macros | out of scope: bindings live app-side | stack-agnostic requirement |
+| Sub-machines | `spawn_fsm` (actor) and `sbb_fsm` (subroutine) | `fx.spawn`; `fx.sbb` reserved (§8.4) | same two concepts, same two names |
+| Inter-machine events | `{:parent_msg, …}` / `{:child_msg, …}` / `{:child_exit, …}` | `parent:msg` / `child:msg` / `child:exit` | converged: Elixir moved off `{:scenario_msg, from, …}` in 1.5.0, since TS dispatches on the type alone and cannot fold two directions into one |
 
 ---
 
@@ -688,6 +759,17 @@ Settled (review of 2026-08-15):
    screen needs it. Both `stay()` and `goto back` are proposed as
    improvements to FSL Elixir instead (see
    `elixip/docs/design/improve-fsl-elixir.md`).
+5. **One concept, one name across the two dialects** (review of 2026-08-18).
+   A concept present in both FSL/TS and FSL Elixir is spelled the same in
+   both, modulo `camelCase` vs `snake_case` and the `fx.` namespace. Where the
+   two had drifted, they converge — breaking either side is acceptable while
+   this package is 0.x. First applications: Elixir renamed `sub_fsm` to
+   `spawn_fsm` and moved off `{:scenario_msg, from, …}` to
+   `{:parent_msg, …}` / `{:child_msg, …}` / `{:child_exit, …}` in its 1.5.0;
+   `fx.sbb` / `fx.sbbReturn` are reserved here before either side implements
+   them (§8.4). The shared table lives in
+   `elixip/docs/design/service-building-block.md` §4.6 — changing a name in
+   one repository means changing it in the other in the same breath.
 
 Still open:
 
