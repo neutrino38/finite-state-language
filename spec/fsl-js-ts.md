@@ -620,10 +620,11 @@ shuts down children, then calls `cleanup(ctx)` if defined — the place to
 
 ### 8.4 Service Building Blocks
 
-**Status: implemented in 0.1.3.** The names were reserved here before either
-dialect had code, for the reason the Node supervision of §9 is recorded: the one
-thing that must not happen twice is the naming. Elixir shipped the layer in its
-1.5.0. See
+**Status: implemented in 0.2.0, in the contract shared with the Elixir dialect.**
+The names were reserved here before either dialect had code, for the reason the
+Node supervision of §9 is recorded: the one thing that must not happen twice is
+the naming. Elixir shipped the layer in its 1.5.0, and 0.2.0 ships it here with
+the two contracts — not only the two vocabularies — already together. See
 [`elixip/docs/design/DESIGN-SBB.md`](https://github.com/neutrino38/elixip/blob/master/docs/design/DESIGN-SBB.md),
 whose §10 holds the shared vocabulary table for both dialects.
 
@@ -653,10 +654,58 @@ enter(ctx, fx) {
   fx.sbb(EstablishCall, { args: { dest } });   // this machine enters that one
 },
 on: {
-  "call:connected": (ev) => goto("connected", ev.uri),
-  "call:rejected":  (ev) => goto("failed", `${ev.code}`),
+  "call:connected": (ev) => goto("connected", ev.data.uri),
+  "call:rejected":  (ev) => goto("failed", `${ev.data.code}`),
 },
 ```
+
+**A block returns `{ type: "namespace:outcome", data }`, and nothing else.**
+Three slots: the namespace it declares, an outcome, a map — the same contract
+Elixir writes `{namespace, outcome, data}`, spelled as one event this dialect
+can dispatch on. The arity is fixed so that upgrading a block does not touch its
+hosts: a block that learns to report one more thing adds a key to `data`, which
+is invisible to whoever does not read it, where a fourth slot would be a break
+in every host matching the old shape.
+
+The vocabulary is **declared**, and the declaration is load-bearing rather than
+documentary:
+
+```ts
+const EstablishCall = defineSbb<HostCtx, BlockEv, Data, Ret>()({
+  name: "Establish",
+  namespace: "call",
+  returns: {
+    connected: "the callee answered — {uri, code}",
+    rejected:  "a final >= 300 — {code, reason}",
+    timeout:   "nobody answered within the deadline — {block}",
+  },
+  data: () => ({ tries: 0 }),
+  timeout: { delay: 32_000 },        // no `then`: expiry is `call:timeout`
+  states: { /* … */ },
+});
+
+// inside the block
+fx.sbbReturn("connected", { uri, code });
+```
+
+- `returns` must be **exhaustive over the return union**, so a block cannot grow
+  an outcome nobody wrote down;
+- `fx.sbbReturn` refuses an undeclared outcome — at compile time through the
+  types, and at run time for the JavaScript callers those do not reach. The
+  failure it prevents is the reason: a mistyped outcome does not crash, it
+  leaves the host waiting on its deadline for an event nobody will ever send;
+- `block.namespace` and `block.returns` are readable at run time, the
+  counterpart of Elixir's `__sbb_namespace__/0` and `__sbb_returns__/0`: what a
+  block can send is available to whatever wants to show it.
+
+**`timeout` is required**, and takes `delay: number | "infinity"`. Elixir bounds
+every block by default at 32 s — timer B, a bound a browser does not have — so
+rather than inventing a default this dialect makes the author decide;
+`{ delay: "infinity" }` is how a block says it ends on an event and never on a
+clock, the shape Elixir writes `@sbb_timeout :infinity`. Without a `then` the
+deadline is an outcome like any other, `{namespace}:timeout` carrying
+`{ block }`, so the host has one clause to write and no special case; a bounded
+block declaring neither is refused at define time.
 
 - **a stack of definitions, not a stack of instances.** The instance keeps a
   stack; events are offered to the definition on top. Unmatched ones fall into
@@ -691,8 +740,11 @@ of the contract now.
   a key its host also uses would clobber it silently. Each entry gets a private
   sandbox, `fx.data`, from the block's own `data()` factory, seeded by the call
   site's `args` and **fresh on every entry** — a hunt calling one block on
-  target after target must not inherit the previous attempt's scratch. What a
-  block wants to hand back goes in the event it returns;
+  target after target must not inherit the previous attempt's scratch.
+  `fx.sbb(block, { resume: true })` is the explicit exception, for a block
+  designed to be interrupted and re-entered, and is Elixir's
+  `sbb_fsm(module, resume: true)`. What a block wants to hand back goes in the
+  event it returns;
 - **two compile-time checks, which is this dialect's whole advantage here.** A
   host whose context does not provide what the block declares it requires does
   not compile; neither does a host with no clause for what the block can return.
@@ -700,7 +752,8 @@ of the contract now.
   outcome leaves the host waiting on a deadline for an event nobody will send,
   a silence with nothing in the log. Elixir checks it with `__sbb_returns__` and
   a compile-time refusal; here it is the ordinary assignability of the block's
-  return type to the host's event union;
+  return type to the host's event union, plus the exhaustiveness of `returns`
+  over that union;
 - **the host's deadline is armed afresh on return, not resumed.** The timer is
   relative, so there is nothing to resume, and a full deadline is what an
   Elixir state body gets, since its `on_events` computes a new one after the
@@ -777,6 +830,9 @@ service is browser-side only: the media machine inside a `phx` hook
 | Pattern matching | full Elixir patterns | `event.type` dispatch + plain TS in the handler | keep the DSL small |
 | SIP helpers | `SIP.Session.*` macros | out of scope: bindings live app-side | stack-agnostic requirement |
 | Sub-machines | `spawn_fsm` (actor) and `sbb_fsm` (subroutine) | `fx.spawn` and `fx.sbb` (§8.4) | same two concepts, same two names |
+| Block returns | `{namespace, outcome, data}` | `{ type: "namespace:outcome", data }` | one contract, spelled for a dialect that dispatches on `type` |
+| Block vocabulary | `@sbb_namespace` / `@sbb_returns`, refused at compile time | `namespace` / `returns`, refused by the type and at run time | same declaration, each checked the way its language can |
+| Block deadline | `@sbb_timeout`, 32 s by default (timer B) | `timeout` required, `delay: number \| "infinity"` | no timer B in a browser: the author decides instead of a default |
 | Inter-machine events | `{:parent_msg, …}` / `{:child_msg, …}` / `{:child_exit, …}` | `parent:msg` / `child:msg` / `child:exit` | converged: Elixir moved off `{:scenario_msg, from, …}` in 1.5.0, since TS dispatches on the type alone and cannot fold two directions into one |
 
 ---
@@ -808,6 +864,15 @@ Settled (review of 2026-08-15):
    and both dialects now implement them (§8.4). The shared table lives in
    `elixip/docs/design/DESIGN-SBB.md` §10 — changing a name in
    one repository means changing it in the other in the same breath.
+6. **The SBB *contract* converges too, not only its names** (0.2.0, review of
+   2026-08-19). Naming was the cheap half: two dialects agreeing on `fx.sbb`
+   while one fixed `{namespace, outcome, data}` and the other let a block
+   return whatever event it liked would still make a reader relearn the layer
+   crossing over. So this dialect took the Elixir contract — the fixed return
+   shape, the declared vocabulary, the block-level bound, `resume:` — and
+   Elixir took this dialect's per-block `cleanup`. The pass landed before the
+   layer shipped: 0.2.0 is the first release here to carry `fx.sbb`, and it
+   carries the shared contract from the start.
 
 Still open:
 

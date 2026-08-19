@@ -11,11 +11,12 @@
  * the state its host already holds.
  *
  * The shape mirrors `defineMachine` — same currying, same runtime
- * validation, same `initial_state` rule — and differs in three ways:
+ * validation, same `initial_state` rule — and differs in four ways:
  * `data` replaces `context` (the host's context is shared, the block
- * only owns a sandbox), `timeout` bounds the whole block rather than
- * one state, and there is no `start()`: a block has no context to make,
- * so nothing can run it alone.
+ * only owns a sandbox), `namespace` + `returns` declare the vocabulary
+ * the block talks back with, `timeout` bounds the whole block rather
+ * than one state, and there is no `start()`: a block has no context to
+ * make, so nothing can run it alone.
  */
 
 import type { AnyEvent, Sbb, SbbDef, SbbFx, StateDef } from "./types.js";
@@ -33,7 +34,11 @@ export function defineSbb<
   Ev extends AnyEvent = AnyEvent,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   Data = Record<string, any>,
-  Ret extends AnyEvent = AnyEvent,
+  // The default has to match the `namespace:outcome` shape, or a
+  // plain-JS `defineSbb()` would derive `never` for its namespace and
+  // its outcomes and could not be written at all.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Ret extends AnyEvent = { type: `${string}:${string}`; data: any },
 >() {
   return <SN extends string>(
     // The intersection requires `initial_state` at compile time without
@@ -53,6 +58,39 @@ export function defineSbb<
   ): Sbb<Ctx, Ev, Data, Ret, SN> => {
     if (typeof def.name !== "string" || def.name.length === 0) {
       throw new TypeError("defineSbb: 'name' must be a non-empty string");
+    }
+    // The namespace leads every return, so it has to be one word: a ':'
+    // inside it would make `namespace:outcome` ambiguous to split, and
+    // to read.
+    const namespace = def.namespace as unknown;
+    if (
+      typeof namespace !== "string" ||
+      namespace.length === 0 ||
+      namespace.includes(":")
+    ) {
+      throw new TypeError(
+        `block '${def.name}': 'namespace' must be a non-empty string without ':'`,
+      );
+    }
+    const returns = def.returns as unknown;
+    if (returns === null || typeof returns !== "object") {
+      throw new TypeError(
+        `block '${def.name}': 'returns' must map each outcome to what it means`,
+      );
+    }
+    const outcomes = Object.keys(returns as Record<string, unknown>);
+    if (outcomes.length === 0) {
+      throw new TypeError(
+        `block '${def.name}': 'returns' declares no outcome — a block that ` +
+          `cannot return leaves its host waiting for ever`,
+      );
+    }
+    for (const o of outcomes) {
+      if (o.includes(":")) {
+        throw new TypeError(
+          `block '${def.name}': outcome '${o}' must not contain ':'`,
+        );
+      }
     }
     if (typeof def.data !== "function") {
       throw new TypeError(`block '${def.name}': 'data' must be a factory`);
@@ -97,16 +135,42 @@ export function defineSbb<
         }
       }
     }
+    // The bound is mandatory, `"infinity"` being how a block says it has
+    // none of its own. A block that runs unbounded by accident is the
+    // silence this layer exists to prevent, so the author decides.
     const timeout = def.timeout;
-    if (timeout !== undefined) {
-      if (typeof timeout.delay !== "number" || timeout.delay < 0) {
-        throw new TypeError(`block '${def.name}': invalid timeout.delay`);
-      }
-      if (typeof timeout.then !== "function") {
-        throw new TypeError(
-          `block '${def.name}': timeout.then must be a function`,
-        );
-      }
+    if (timeout === null || typeof timeout !== "object") {
+      throw new TypeError(
+        `block '${def.name}': 'timeout' is required — give it a delay, ` +
+          `or { delay: "infinity" } if the block has no bound of its own`,
+      );
+    }
+    if (
+      timeout.delay !== "infinity" &&
+      (typeof timeout.delay !== "number" || timeout.delay < 0)
+    ) {
+      throw new TypeError(
+        `block '${def.name}': timeout.delay must be a positive number or "infinity"`,
+      );
+    }
+    if (timeout.then !== undefined && typeof timeout.then !== "function") {
+      throw new TypeError(
+        `block '${def.name}': timeout.then must be a function`,
+      );
+    }
+    // Without a `then` the deadline returns `<namespace>:timeout`, which
+    // only works if the block declared that outcome — otherwise expiry
+    // would post an event the host has no clause for.
+    if (
+      timeout.delay !== "infinity" &&
+      timeout.then === undefined &&
+      !outcomes.includes("timeout")
+    ) {
+      throw new TypeError(
+        `block '${def.name}': a bounded block without timeout.then returns ` +
+          `'${namespace}:timeout' — declare it in 'returns', or handle the ` +
+          `deadline yourself with timeout.then`,
+      );
     }
 
     // Declaration order defines next(), as in a machine (spec §3.1).
@@ -118,6 +182,8 @@ export function defineSbb<
     const internal = def as unknown as InternalSbbDef;
     const block = {
       name: def.name,
+      namespace,
+      returns: Object.freeze({ ...(returns as Record<string, string>) }),
       toMermaid: () =>
         renderMermaid({
           name: def.name,

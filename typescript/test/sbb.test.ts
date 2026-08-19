@@ -1,6 +1,7 @@
 /**
  * Service Building Blocks (spec §8.4): the subroutine model — one
- * machine, one context, one mailbox, a stack of definitions.
+ * machine, one context, one mailbox, a stack of definitions — and the
+ * declared vocabulary a block talks back with.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,6 +14,7 @@ import {
   stay,
   success,
   type Sbb,
+  type SbbReturn,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -31,17 +33,21 @@ type Ev =
   | Ret;
 
 type Ret =
-  | { type: "call:connected"; uri: string }
-  | { type: "call:rejected"; code: number }
-  | { type: "call:timeout" };
+  | SbbReturn<"call", "connected", { uri: string }>
+  | SbbReturn<"call", "rejected", { code: number }>
+  | SbbReturn<"call", "timeout", { block: string }>;
 
 const Establish = defineSbb<HostCtx, Ev, Data, Ret>()({
   name: "Establish",
-  data: () => ({ tries: 0, dest: "" }),
-  timeout: {
-    delay: 30_000,
-    then: (_c, fx) => fx.sbbReturn({ type: "call:timeout" }),
+  namespace: "call",
+  returns: {
+    connected: "the callee answered — {uri}",
+    rejected: "a final ≥ 300 — {code}",
+    timeout: "nobody answered within the block's deadline — {block}",
   },
+  data: () => ({ tries: 0, dest: "" }),
+  // No `then`: the deadline is an outcome like any other.
+  timeout: { delay: 30_000 },
   cleanup: (ctx) => ctx.trace.push("establish cleanup"),
   states: {
     initial_state: {
@@ -59,10 +65,9 @@ const Establish = defineSbb<HostCtx, Ev, Data, Ret>()({
         },
         "sip:200": (ev, ctx, fx) => {
           ctx.answeredBy = ev.from;
-          fx.sbbReturn({ type: "call:connected", uri: ev.from });
+          fx.sbbReturn("connected", { uri: ev.from });
         },
-        "sip:486": (_ev, _ctx, fx) =>
-          fx.sbbReturn({ type: "call:rejected", code: 486 }),
+        "sip:486": (_ev, _ctx, fx) => fx.sbbReturn("rejected", { code: 486 }),
         "ui:hangup": () => aborted("caller gave up"),
       },
     },
@@ -82,14 +87,14 @@ function host(opts: { after?: number } = {}) {
         },
         on: {
           "call:connected": (ev, ctx) => {
-            ctx.trace.push(`connected to ${ev.uri}`);
+            ctx.trace.push(`connected to ${ev.data.uri}`);
             return goto("talking");
           },
           "call:rejected": (ev, ctx) => {
-            ctx.trace.push(`rejected ${ev.code}`);
-            return failure(`rejected ${ev.code}`);
+            ctx.trace.push(`rejected ${ev.data.code}`);
+            return failure(`rejected ${ev.data.code}`);
           },
-          "call:timeout": () => failure("no answer"),
+          "call:timeout": (ev) => failure(`no answer from ${ev.data.block}`),
           noise: (_ev, ctx) => {
             ctx.trace.push("host saw noise");
             return stay();
@@ -148,36 +153,35 @@ describe("entering and returning", () => {
 
   it("seeds the sandbox from args, fresh on every entry", () => {
     const seen: number[] = [];
-    const Counter = defineSbb<
-      { n: number },
-      { type: "go" } | R,
-      { tries: number },
-      R
-    >()({
+    type R = SbbReturn<"c", "done">;
+    const Counter = defineSbb<{ n: number }, { type: "go" } | R, Data2, R>()({
       name: "Counter",
+      namespace: "c",
+      returns: { done: "counted once" },
       data: () => ({ tries: 0 }),
+      timeout: { delay: "infinity" },
       states: {
         initial_state: {
           enter(_ctx, fx) {
             fx.data.tries++;
             seen.push(fx.data.tries);
-            fx.sbbReturn({ type: "done" });
+            fx.sbbReturn("done", {});
           },
         },
       },
     });
-    type R = { type: "done" };
+    type Data2 = { tries: number };
     const M = defineMachine<{ n: number }, { type: "go" } | R>()({
       name: "Twice",
       context: () => ({ n: 0 }),
       states: {
         initial_state: {
           enter: (_c, fx) => fx.sbb(Counter),
-          on: { done: () => goto("again") },
+          on: { "c:done": () => goto("again") },
         },
         again: {
           enter: (_c, fx) => fx.sbb(Counter),
-          on: { done: () => success() },
+          on: { "c:done": () => success() },
         },
       },
     });
@@ -185,10 +189,48 @@ describe("entering and returning", () => {
     expect(seen).toEqual([1, 1]);
   });
 
+  it("keeps the sandbox across entries when the call site says resume", () => {
+    const seen: number[] = [];
+    type R = SbbReturn<"c", "done">;
+    type D = { tries: number };
+    const Counter = defineSbb<{ n: number }, { type: "go" } | R, D, R>()({
+      name: "Counter",
+      namespace: "c",
+      returns: { done: "counted once" },
+      data: () => ({ tries: 0 }),
+      timeout: { delay: "infinity" },
+      states: {
+        initial_state: {
+          enter(_ctx, fx) {
+            fx.data.tries++;
+            seen.push(fx.data.tries);
+            fx.sbbReturn("done", {});
+          },
+        },
+      },
+    });
+    const M = defineMachine<{ n: number }, { type: "go" } | R>()({
+      name: "Resumed",
+      context: () => ({ n: 0 }),
+      states: {
+        initial_state: {
+          enter: (_c, fx) => fx.sbb(Counter),
+          on: { "c:done": () => goto("again") },
+        },
+        again: {
+          enter: (_c, fx) => fx.sbb(Counter, { resume: true }),
+          on: { "c:done": () => success() },
+        },
+      },
+    });
+    M.start();
+    expect(seen).toEqual([1, 2]);
+  });
+
   it("refuses a stale fx: only the top frame may return", () => {
     const warnings: string[] = [];
-    let escaped: { sbbReturn: (ev: R) => void } | undefined;
-    type R = { type: "done" };
+    type R = SbbReturn<"l", "done">;
+    let escaped: { sbbReturn: (o: "done", d: unknown) => void } | undefined;
     const Leaky = defineSbb<
       Record<string, never>,
       { type: "go" } | R,
@@ -196,12 +238,15 @@ describe("entering and returning", () => {
       R
     >()({
       name: "Leaky",
+      namespace: "l",
+      returns: { done: "done" },
       data: () => ({}),
+      timeout: { delay: "infinity" },
       states: {
         initial_state: {
           enter(_ctx, fx) {
-            escaped = fx;
-            fx.sbbReturn({ type: "done" });
+            escaped = fx as never;
+            fx.sbbReturn("done", {});
           },
         },
       },
@@ -212,16 +257,79 @@ describe("entering and returning", () => {
       states: {
         initial_state: {
           enter: (_c, fx) => fx.sbb(Leaky),
-          on: { done: () => goto("after") },
+          on: { "l:done": () => goto("after") },
         },
         after: {},
       },
     });
     const m = M.start({ logger: (l) => warnings.push(l) });
     expect(m.state).toBe("after");
-    escaped?.sbbReturn({ type: "done" }); // the block is long gone
+    escaped?.sbbReturn("done", {}); // the block is long gone
     expect(warnings.join()).toContain("is not the one currently running");
     expect(m.state).toBe("after");
+  });
+});
+
+describe("the declared vocabulary", () => {
+  it("publishes what the block can send", () => {
+    expect(Establish.namespace).toBe("call");
+    expect(Object.keys(Establish.returns)).toEqual([
+      "connected",
+      "rejected",
+      "timeout",
+    ]);
+    expect(Establish.returns.connected).toContain("answered");
+  });
+
+  it("fails the machine on an outcome the block did not declare", async () => {
+    // Plain JS reaches here: TS refuses the call at compile time.
+    type R = SbbReturn<"b", "done">;
+    const B = defineSbb<
+      Record<string, never>,
+      { type: "go" } | R,
+      Record<string, never>,
+      R
+    >()({
+      name: "Typo",
+      namespace: "b",
+      returns: { done: "the only outcome" },
+      data: () => ({}),
+      timeout: { delay: "infinity" },
+      states: {
+        initial_state: {
+          enter: (_c, fx) =>
+            (fx.sbbReturn as (o: string, d: unknown) => void)("donne", {}),
+        },
+      },
+    });
+    const M = defineMachine<Record<string, never>, { type: "go" } | R>()({
+      name: "H",
+      context: () => ({}),
+      states: {
+        initial_state: {
+          enter: (_c, fx) => fx.sbb(B),
+          on: { "b:done": () => success() },
+        },
+      },
+    });
+    const m = M.start({ logger: () => {} });
+    const r = await m.done;
+    expect(r.outcome).toBe("failure");
+    expect(r.reason).toContain("undeclared outcome 'donne'");
+    expect(r.reason).toContain("declared: done");
+  });
+
+  it("builds the event as {namespace}:{outcome} carrying data", () => {
+    const seen: unknown[] = [];
+    const m = inBlock(host().start());
+    m.subscribe((n) => {
+      if (n.event) seen.push(n.event);
+    });
+    m.send({ type: "sip:200", from: "sip:bob@phone" });
+    expect(seen).toContainEqual({
+      type: "call:connected",
+      data: { uri: "sip:bob@phone" },
+    });
   });
 });
 
@@ -283,29 +391,96 @@ describe("deadlines", () => {
     expect(m.sbb?.block).toBe("Establish"); // still in the block, alive
   });
 
-  it("bounds the block with its own deadline", async () => {
+  it("returns the deadline as an outcome when the block declares no then", async () => {
     const m = inBlock(host().start());
     vi.advanceTimersByTime(30_000);
-    expect((await m.done).reason).toBe("no answer");
+    expect((await m.done).reason).toBe("no answer from Establish");
+  });
+
+  it("lets timeout.then decide when the block declares one", async () => {
+    type R = SbbReturn<"b", "gave_up", { after: number }>;
+    const B = defineSbb<
+      Record<string, never>,
+      { type: "go" } | R,
+      Record<string, never>,
+      R
+    >()({
+      name: "Patient",
+      namespace: "b",
+      returns: { gave_up: "the block's own word for expiry — {after}" },
+      data: () => ({}),
+      timeout: {
+        delay: 5_000,
+        then: (_c, fx) => fx.sbbReturn("gave_up", { after: 5_000 }),
+      },
+      states: { initial_state: {} },
+    });
+    const M = defineMachine<Record<string, never>, { type: "go" } | R>()({
+      name: "H",
+      context: () => ({}),
+      states: {
+        initial_state: {
+          enter: (_c, fx) => fx.sbb(B),
+          on: { "b:gave_up": (ev) => failure(`waited ${ev.data.after}`) },
+        },
+      },
+    });
+    const m = M.start();
+    vi.advanceTimersByTime(5_000);
+    expect((await m.done).reason).toBe("waited 5000");
+  });
+
+  it("arms nothing for a block declaring delay: infinity", () => {
+    type R = SbbReturn<"b", "done">;
+    const B = defineSbb<
+      Record<string, never>,
+      { type: "go" } | R,
+      Record<string, never>,
+      R
+    >()({
+      name: "Endless",
+      namespace: "b",
+      returns: { done: "ended by an event, never by a clock" },
+      data: () => ({}),
+      timeout: { delay: "infinity" },
+      states: {
+        initial_state: { on: { go: (_e, _c, fx) => fx.sbbReturn("done", {}) } },
+      },
+    });
+    const M = defineMachine<Record<string, never>, { type: "go" } | R>()({
+      name: "H",
+      context: () => ({}),
+      states: {
+        initial_state: {
+          enter: (_c, fx) => fx.sbb(B),
+          on: { "b:done": () => goto("after") },
+        },
+        after: {},
+      },
+    });
+    const m = M.start();
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(m.sbb?.block).toBe("Endless");
+    m.send({ type: "go" });
+    expect(m.state).toBe("after");
   });
 
   it("keeps the host's fx.delay alive across a block, and drops the block's", () => {
     const fired: string[] = [];
-    type E = { type: "go" } | { type: "ping"; who: string } | { type: "done" };
-    const B = defineSbb<
-      Record<string, never>,
-      E,
-      Record<string, never>,
-      { type: "done" }
-    >()({
+    type R = SbbReturn<"b", "done">;
+    type E = { type: "go" } | { type: "ping"; who: string } | R;
+    const B = defineSbb<Record<string, never>, E, Record<string, never>, R>()({
       name: "B",
+      namespace: "b",
+      returns: { done: "done" },
       data: () => ({}),
+      timeout: { delay: "infinity" },
       states: {
         initial_state: {
           enter(_c, fx) {
             fx.delay({ type: "ping", who: "block" }, 5_000);
           },
-          on: { go: (_e, _c, fx) => fx.sbbReturn({ type: "done" }) },
+          on: { go: (_e, _c, fx) => fx.sbbReturn("done", {}) },
         },
       },
     });
@@ -319,7 +494,7 @@ describe("deadlines", () => {
             fx.sbb(B);
           },
           on: {
-            done: () => stay(),
+            "b:done": () => stay(),
             ping: (ev) => {
               fired.push(ev.who);
               return stay();
@@ -378,22 +553,27 @@ describe("terminals propagate, sbbReturn does not", () => {
 });
 
 describe("composition", () => {
-  type E2 = { type: "go" } | { type: "inner:done" } | { type: "outer:done" };
+  type Inner_R = SbbReturn<"inner", "done">;
+  type Outer_R = SbbReturn<"outer", "done">;
+  type E2 = { type: "go" } | Inner_R | Outer_R;
 
   const Inner = defineSbb<
     { trace: string[] },
     E2,
     Record<string, never>,
-    { type: "inner:done" }
+    Inner_R
   >()({
     name: "Inner",
+    namespace: "inner",
+    returns: { done: "done" },
     data: () => ({}),
+    timeout: { delay: "infinity" },
     states: {
       initial_state: {
         enter: (ctx) => {
           ctx.trace.push("inner");
         },
-        on: { go: (_e, _c, fx) => fx.sbbReturn({ type: "inner:done" }) },
+        on: { go: (_e, _c, fx) => fx.sbbReturn("done", {}) },
       },
     },
   });
@@ -402,10 +582,13 @@ describe("composition", () => {
     { trace: string[] },
     E2,
     Record<string, never>,
-    { type: "outer:done" }
+    Outer_R
   >()({
     name: "Outer",
+    namespace: "outer",
+    returns: { done: "done" },
     data: () => ({}),
+    timeout: { delay: "infinity" },
     states: {
       initial_state: {
         enter(ctx, fx) {
@@ -413,7 +596,7 @@ describe("composition", () => {
           fx.sbb(Inner);
         },
         on: {
-          "inner:done": (_e, _c, fx) => fx.sbbReturn({ type: "outer:done" }),
+          "inner:done": (_e, _c, fx) => fx.sbbReturn("done", {}),
         },
       },
     },
@@ -440,7 +623,7 @@ describe("composition", () => {
   });
 
   it("stops runaway recursion with a failure that names the block", async () => {
-    type RE = { type: "r:done" };
+    type RE = SbbReturn<"r", "done">;
     type Recur = Sbb<
       Record<string, never>,
       RE,
@@ -458,7 +641,10 @@ describe("composition", () => {
       RE
     >()({
       name: "Recur",
+      namespace: "r",
+      returns: { done: "done" },
       data: () => ({}),
+      timeout: { delay: "infinity" },
       states: {
         initial_state: {
           enter(_c, fx) {
@@ -487,20 +673,19 @@ describe("composition", () => {
 
 describe("a block is a machine in every other way", () => {
   it("next() follows the block's own declaration order", () => {
-    type E3 = { type: "go" } | { type: "b:done"; where: string };
-    const B = defineSbb<
-      Record<string, never>,
-      E3,
-      Record<string, never>,
-      { type: "b:done"; where: string }
-    >()({
+    type R = SbbReturn<"b", "done", { where: string }>;
+    type E3 = { type: "go" } | R;
+    const B = defineSbb<Record<string, never>, E3, Record<string, never>, R>()({
       name: "Steps",
+      namespace: "b",
+      returns: { done: "walked the three states — {where}" },
       data: () => ({}),
+      timeout: { delay: "infinity" },
       states: {
         initial_state: { on: { go: () => next() } },
         second: { on: { go: () => next() } },
         third: {
-          enter: (_c, fx) => fx.sbbReturn({ type: "b:done", where: "third" }),
+          enter: (_c, fx) => fx.sbbReturn("done", { where: "third" }),
         },
       },
     });
@@ -510,7 +695,9 @@ describe("a block is a machine in every other way", () => {
       states: {
         initial_state: {
           enter: (_c, fx) => fx.sbb(B),
-          on: { "b:done": (ev) => goto(ev.where === "third" ? "ok" : "nope") },
+          on: {
+            "b:done": (ev) => goto(ev.data.where === "third" ? "ok" : "nope"),
+          },
         },
         ok: {},
         nope: {},
@@ -531,10 +718,29 @@ describe("a block is a machine in every other way", () => {
 });
 
 describe("defineSbb validation", () => {
-  const ok = { name: "V", data: () => ({}), states: { initial_state: {} } };
+  const ok = {
+    name: "V",
+    namespace: "v",
+    returns: { done: "done" },
+    data: () => ({}),
+    timeout: { delay: "infinity" as const },
+    states: { initial_state: {} },
+  };
 
   it("rejects a nameless block", () => {
     expect(() => defineSbb()({ ...ok, name: "" })).toThrow(/non-empty string/);
+  });
+
+  it("rejects a namespace carrying a colon", () => {
+    expect(() => defineSbb()({ ...ok, namespace: "a:b" })).toThrow(
+      /'namespace' must be a non-empty string without ':'/,
+    );
+  });
+
+  it("rejects a block that declares no outcome", () => {
+    expect(() => defineSbb()({ ...ok, returns: {} })).toThrow(
+      /declares no outcome/,
+    );
   });
 
   it("rejects a missing data factory", () => {
@@ -558,10 +764,22 @@ describe("defineSbb validation", () => {
     ).toThrow(/is reserved/);
   });
 
-  it("rejects an invalid timeout", () => {
-    expect(() =>
-      defineSbb()({ ...ok, timeout: { delay: -1, then: () => {} } }),
-    ).toThrow(/invalid timeout.delay/);
+  it("rejects a missing timeout: the bound is a decision, not a default", () => {
+    expect(() => defineSbb()({ ...ok, timeout: undefined as never })).toThrow(
+      /'timeout' is required/,
+    );
+  });
+
+  it("rejects an invalid timeout delay", () => {
+    expect(() => defineSbb()({ ...ok, timeout: { delay: -1 } })).toThrow(
+      /positive number or "infinity"/,
+    );
+  });
+
+  it("rejects a bounded block whose 'timeout' outcome is undeclared", () => {
+    expect(() => defineSbb()({ ...ok, timeout: { delay: 1000 } })).toThrow(
+      /declare it in 'returns'/,
+    );
   });
 
   it("rejects a value that is not a block", () => {
@@ -580,20 +798,18 @@ describe("defineSbb validation", () => {
 });
 
 describe("calling a block from a handler, not only from enter", () => {
-  type E =
-    { type: "start" } | { type: "go" } | { type: "b:done" } | { type: "late" };
+  type R = SbbReturn<"b", "done">;
+  type E = { type: "start" } | { type: "go" } | R | { type: "late" };
 
-  const B = defineSbb<
-    Record<string, never>,
-    E,
-    Record<string, never>,
-    { type: "b:done" }
-  >()({
+  const B = defineSbb<Record<string, never>, E, Record<string, never>, R>()({
     name: "B",
+    namespace: "b",
+    returns: { done: "done" },
     data: () => ({}),
+    timeout: { delay: "infinity" },
     states: {
       initial_state: {
-        on: { go: (_e, _c, fx) => fx.sbbReturn({ type: "b:done" }) },
+        on: { go: (_e, _c, fx) => fx.sbbReturn("done", {}) },
       },
     },
   });
@@ -657,24 +873,23 @@ describe("calling a block from a handler, not only from enter", () => {
 });
 
 describe("the two ways a state body can hand the machine over", () => {
-  type E = { type: "dial"; n: string } | { type: "go" } | { type: "b:done" };
+  type R = SbbReturn<"b", "done">;
+  type E = { type: "dial"; n: string } | { type: "go" } | R;
 
-  const B = defineSbb<
-    { seen: string[] },
-    E,
-    Record<string, never>,
-    { type: "b:done" }
-  >()({
+  const B = defineSbb<{ seen: string[] }, E, Record<string, never>, R>()({
     name: "B",
+    namespace: "b",
+    returns: { done: "done" },
     data: () => ({}),
+    timeout: { delay: "infinity" },
     states: {
       initial_state: {
         on: {
           dial: (ev, ctx, fx) => {
             ctx.seen.push(`block got ${ev.n}`);
-            fx.sbbReturn({ type: "b:done" });
+            fx.sbbReturn("done", {});
           },
-          go: (_e, _c, fx) => fx.sbbReturn({ type: "b:done" }),
+          go: (_e, _c, fx) => fx.sbbReturn("done", {}),
         },
       },
     },
@@ -709,15 +924,18 @@ describe("the two ways a state body can hand the machine over", () => {
       Record<string, never>,
       E,
       Record<string, never>,
-      { type: "b:done" }
+      R
     >()({
       name: "Chatty",
+      namespace: "b",
+      returns: { done: "done" },
       data: () => ({}),
+      timeout: { delay: "infinity" },
       states: {
         initial_state: {
           on: {
             go: (_e, _c, fx) => {
-              fx.sbbReturn({ type: "b:done" });
+              fx.sbbReturn("done", {});
               return goto("nowhere_useful");
             },
           },

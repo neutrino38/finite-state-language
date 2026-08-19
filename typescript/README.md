@@ -118,20 +118,35 @@ machine behind a callable face.
 a subroutine: same machine, same context, same mailbox, suspended at the
 call site until the block returns.
 
+A block declares the vocabulary it talks back with — a **namespace** and
+one line per **outcome** — and every return is
+`{ type: "namespace:outcome", data }`. Three slots, fixed: a block that
+learns to report one more thing adds a key to `data`, which is invisible
+to a host that does not read it.
+
 ```ts
-type Chosen = { type: "menu:choice"; key: string };
+type Chosen =
+  | SbbReturn<"menu", "choice", { key: string }>
+  | SbbReturn<"menu", "timeout", { block: string }>;
 
 const Menu = defineSbb<{ lang: string }, MenuEv, { tries: number }, Chosen>()({
   name: "Menu",
+  // the vocabulary: what this block says, and what each word means
+  namespace: "menu",
+  returns: {
+    choice: "the caller pressed a key — {key}",
+    timeout: "nobody pressed anything in time — {block}",
+  },
   // the block's own scratch space, fresh on every call
   data: () => ({ tries: 0 }),
-  // its own deadline: the host's is suspended while it runs
-  timeout: { delay: 30_000, then: (_c, fx) => fx.sbbReturn({ type: "menu:choice", key: "" }) },
+  // its own deadline: the host's is suspended while it runs. Without a
+  // `then`, expiry is an outcome like any other — `menu:timeout`.
+  timeout: { delay: 30_000 },
   states: {
     initial_state: {
       enter: (ctx, fx) => play(prompt(ctx.lang, fx.data.tries)),
       on: {
-        "dtmf:key": (ev, _ctx, fx) => fx.sbbReturn({ type: "menu:choice", key: ev.key }),
+        "dtmf:key": (ev, _ctx, fx) => fx.sbbReturn("choice", { key: ev.key }),
       },
     },
   },
@@ -140,15 +155,31 @@ const Menu = defineSbb<{ lang: string }, MenuEv, { tries: number }, Chosen>()({
 // …and in the host, one line and a couple of clauses:
 placing: {
   enter: (_ctx, fx) => { fx.sbb(Menu, { args: { tries: 1 } }); },
-  on: { "menu:choice": (ev) => goto("routing", ev.key) },
+  on: {
+    "menu:choice":  (ev) => goto("routing", ev.data.key),
+    "menu:timeout": ()   => goto("ready", "no answer"),
+  },
 },
 ```
 
-Two things the compiler checks, and they are the ones worth checking: a
+Three things the compiler checks, and they are the ones worth checking: a
 host whose context does not provide what the block declares it requires
-will not compile, and neither will a host that has no clause for what the
+will not compile; neither will a host that has no clause for what the
 block can return — the "waiting for an event nobody will send" silence,
-turned into a type error.
+turned into a type error; and `returns` has to document _every_ outcome
+of the union, so a block cannot grow one nobody wrote down. An outcome
+that is not declared is refused at run time too, for the JavaScript
+callers the type system does not reach.
+
+`timeout` is required. `{ delay: "infinity" }` is how a block says it has
+no bound of its own — a relay that ends when the dialog ends — and making
+that a decision rather than a default is deliberate: a block left
+unbounded by accident is exactly the silence above.
+
+A block's sandbox is fresh on every entry, so a hunt calling one block on
+target after target cannot inherit the last attempt's scratch.
+`fx.sbb(block, { resume: true })` is the explicit exception, for a block
+designed to be interrupted and re-entered.
 
 While a block runs, `state` stays the **host's** state — a subroutine
 call is not a state your machine declared — and `snapshot.sbb` says which

@@ -17,6 +17,7 @@ import {
   type DoneResult,
   type Fx,
   type Instance,
+  type SbbReturn,
   type SbbView,
   type Snapshot,
   type TerminalStateName,
@@ -264,11 +265,14 @@ describe("§8.4 fx.sbb type checking", () => {
     callee?: string;
   }
   type BlockEv = { type: "sip:accepted" } | Answered;
-  type Answered = { type: "call:answered"; who: string };
+  type Answered = SbbReturn<"call", "answered", { who: string }>;
 
   const Block = defineSbb<Needs, BlockEv, { tries: number }, Answered>()({
     name: "Block",
+    namespace: "call",
+    returns: { answered: "the callee picked up — {who}" },
     data: () => ({ tries: 0 }),
+    timeout: { delay: "infinity" },
     states: {
       initial_state: {
         enter(ctx, fx) {
@@ -278,7 +282,7 @@ describe("§8.4 fx.sbb type checking", () => {
         },
         on: {
           "sip:accepted": (_ev, ctx, fx) =>
-            fx.sbbReturn({ type: "call:answered", who: ctx.callee ?? "" }),
+            fx.sbbReturn("answered", { who: ctx.callee ?? "" }),
         },
       },
     },
@@ -291,7 +295,7 @@ describe("§8.4 fx.sbb type checking", () => {
       states: {
         initial_state: {
           enter: (_c, fx) => fx.sbb(Block, { args: { tries: 1 } }),
-          on: { "call:answered": (ev) => goto("ready", ev.who) },
+          on: { "call:answered": (ev) => goto("ready", ev.data.who) },
         },
         ready: {},
       },
@@ -328,19 +332,46 @@ describe("§8.4 fx.sbb type checking", () => {
   it("rejects an undeclared outcome and an unknown sandbox key", () => {
     defineSbb<Needs, BlockEv, { tries: number }, Answered>()({
       name: "Wrong",
+      namespace: "call",
+      returns: { answered: "the callee picked up — {who}" },
       data: () => ({ tries: 0 }),
+      timeout: { delay: "infinity" },
       states: {
         initial_state: {
           on: {
             "sip:accepted": (_ev, _ctx, fx) => {
               // @ts-expect-error — not one of the block's declared returns
-              fx.sbbReturn({ type: "call:rejected" });
+              fx.sbbReturn("rejected", {});
+              // @ts-expect-error — the data map of `answered` has a `who`
+              fx.sbbReturn("answered", {});
               // @ts-expect-error — not part of this block's sandbox
               void fx.data.attempts;
             },
           },
         },
       },
+    });
+  });
+
+  it("ties the declared namespace and returns to the return union", () => {
+    defineSbb<Needs, BlockEv, { tries: number }, Answered>()({
+      name: "WrongNamespace",
+      // @ts-expect-error — the union speaks "call", not "dial"
+      namespace: "dial",
+      returns: { answered: "…" },
+      data: () => ({ tries: 0 }),
+      timeout: { delay: "infinity" },
+      states: { initial_state: {} },
+    });
+
+    defineSbb<Needs, BlockEv, { tries: number }, Answered>()({
+      name: "Undocumented",
+      namespace: "call",
+      // @ts-expect-error — `returns` must cover every outcome of the union
+      returns: {},
+      data: () => ({ tries: 0 }),
+      timeout: { delay: "infinity" },
+      states: { initial_state: {} },
     });
   });
 

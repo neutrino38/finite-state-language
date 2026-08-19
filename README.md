@@ -142,7 +142,7 @@ service, the pun has done its job.
 - [x] Diagrams from the source (`finite-state-language/diagram`)
 - [x] Service building blocks (`fx.sbb` / `fx.sbbReturn`)
 - [ ] JsSIP web phone — full example, as its own project
-- [x] `finite-state-language@0.1.3` on npm
+- [x] `finite-state-language@0.2.0` on npm
 
 ## Get involved
 

@@ -243,8 +243,13 @@ import { defineMachine, defineSbb, goto, failure, stay } from "finite-state-lang
 
 const Establish = defineSbb<Ctx, Ev, Data, Ret>()({
   name: "Establish",
+  namespace: "call",
+  returns: {
+    connected: "the callee answered",
+    timeout: "nobody answered in time",
+  },
   data: () => ({ tries: 0 }),
-  timeout: { delay: 30_000, then: (_c, fx) => fx.sbbReturn({ type: "call:timeout" }) },
+  timeout: { delay: 30_000 },
   states: {
     initial_state: {
       enter: () => goto("ringing"),
@@ -252,7 +257,7 @@ const Establish = defineSbb<Ctx, Ev, Data, Ret>()({
     ringing: {
       on: {
         "sip:180": () => stay("still ringing"),
-        "sip:200": (ev, _c, fx) => fx.sbbReturn({ type: "call:connected", uri: ev.uri }),
+        "sip:200": (ev, _c, fx) => fx.sbbReturn("connected", { uri: ev.uri }),
         "ui:hangup": () => aborted("caller gave up"),
       },
     },
@@ -275,6 +280,83 @@ const Host = defineMachine<Ctx, Ev>()({
   },
 });
 `;
+
+const SHARED_CLAUSES = `
+import { defineMachine, goto, stay } from "finite-state-language";
+
+function interruptions(target) {
+  return {
+    "sys:sleep": () => goto("sleeping", "veille"),
+    "net:lost": () => goto("recovering", "lien perdu"),
+    // la cible vient d'un paramètre : rien à extraire, comme partout
+    "ui:back": () => goto(target),
+    "ui:noop": () => undefined,
+  };
+}
+
+const M = defineMachine<Ctx, Ev>()({
+  name: "Shared",
+  context: () => ({}),
+  states: {
+    initial_state: {
+      on: {
+        ...interruptions("recovering"),
+        "ui:go": () => goto("working"),
+      },
+    },
+    working: {
+      on: {
+        ...interruptions("recovering"),
+        // celle-ci l'emporte sur le fragment, comme à l'exécution
+        "sys:sleep": () => stay("on finit d'abord"),
+      },
+    },
+    recovering: {},
+    sleeping: {},
+  },
+});
+`;
+
+describe("clauses partagées entre états (`...fragment()` dans `on`)", () => {
+  const [graph] = machineGraphs(SHARED_CLAUSES) as [MachineGraph];
+
+  it("dessine les clauses qu'un fragment apporte à chaque état", () => {
+    const hops = graph.edges.map((e) => `${e.from}->${e.to}`);
+    expect(hops).toContain("initial_state->sleeping");
+    expect(hops).toContain("initial_state->recovering");
+    expect(hops).toContain("working->recovering");
+  });
+
+  it("ne devine pas une cible que le fragment reçoit en paramètre", () => {
+    // `goto(target)` n'a pas de valeur statique : aucune arête. Le clause
+    // retombe alors dans « consommé sans effet », l'approximation que
+    // l'extracteur fait partout où il ne voit pas de transition.
+    const labels = graph.edges.flatMap((e) => e.labels);
+    expect(labels.some((l) => l.startsWith("ui:back"))).toBe(false);
+    expect(
+      graph.consumed.find((c) => c.state === "initial_state")?.events,
+    ).toContain("ui:back");
+  });
+
+  it("laisse la clause propre de l'état l'emporter sur celle du fragment", () => {
+    // `working` redéfinit sys:sleep : self edge, et pas d'arête vers sleeping
+    expect(graph.edges.map((e) => `${e.from}->${e.to}`)).not.toContain(
+      "working->sleeping",
+    );
+    const self = graph.edges.find(
+      (e) => e.from === "working" && e.to === "working",
+    );
+    expect(self?.labels).toEqual(["sys:sleep (on finit d'abord)"]);
+  });
+
+  it("compte comme consommé ce que le fragment consomme sans effet", () => {
+    const consumed = graph.consumed.find((c) => c.state === "recovering");
+    expect(consumed).toBeUndefined(); // recovering n'a pas de `on`
+    expect(
+      graph.consumed.find((c) => c.state === "initial_state")?.events,
+    ).toContain("ui:noop");
+  });
+});
 
 describe("§8.4 diagram — service building blocks", () => {
   const graphs = machineGraphs(WITH_BLOCK);
@@ -311,6 +393,30 @@ describe("§8.4 diagram — service building blocks", () => {
     expect(timeouts.map((e) => e.from).sort()).toEqual([
       "initial_state",
       "ringing",
+    ]);
+    // A bounded block with no `then` leaves by returning its `timeout`
+    // outcome, so the edge says which event the host will see.
+    expect(timeouts.every((e) => e.to === "[*]")).toBe(true);
+    expect(timeouts[0]?.labels).toContain("after 30 s (call:timeout)");
+  });
+
+  it("draws nothing for a block that declares delay: infinity", () => {
+    const [endless] = machineGraphs(`
+      const Bridge = defineSbb<Ctx, Ev, Data, Ret>()({
+        name: "Bridge",
+        namespace: "bridge",
+        returns: { ended: "the dialog ended" },
+        data: () => ({}),
+        timeout: { delay: "infinity" },
+        states: {
+          initial_state: {
+            on: { "sip:bye": (_e, _c, fx) => fx.sbbReturn("ended", {}) },
+          },
+        },
+      });
+    `) as [MachineGraph];
+    expect(endless.edges.map((e) => e.labels)).toEqual([
+      ["sip:bye (bridge:ended)"],
     ]);
   });
 

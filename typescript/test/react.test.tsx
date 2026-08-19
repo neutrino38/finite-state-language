@@ -13,6 +13,7 @@ import {
   stay,
   type Instance,
   type Machine,
+  type SbbReturn,
 } from "../src/index.js";
 import { useMachine } from "../src/react/index.js";
 
@@ -174,7 +175,7 @@ describe("§7.1 useMachine", () => {
 // ---------------------------------------------------------------------------
 
 type BlockEv = { type: "open" } | { type: "pick"; key: string } | MenuDone;
-type MenuDone = { type: "menu:choice"; key: string };
+type MenuDone = SbbReturn<"menu", "choice", { key: string }>;
 
 const Menu = defineSbb<
   { picked?: string },
@@ -183,7 +184,10 @@ const Menu = defineSbb<
   MenuDone
 >()({
   name: "Menu",
+  namespace: "menu",
+  returns: { choice: "the caller picked an entry — {key}" },
   data: () => ({ prompt: "main" }),
+  timeout: { delay: "infinity" },
   states: {
     initial_state: {
       meta: { badge: "prompting" },
@@ -194,7 +198,7 @@ const Menu = defineSbb<
       on: {
         pick: (ev, ctx, fx) => {
           ctx.picked = ev.key;
-          fx.sbbReturn({ type: "menu:choice", key: ev.key });
+          fx.sbbReturn("choice", { key: ev.key });
         },
       },
     },

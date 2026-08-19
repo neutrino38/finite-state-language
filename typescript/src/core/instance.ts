@@ -80,11 +80,13 @@ export interface InternalDef {
 /** The untyped face of a block definition (spec §8.4). */
 export interface InternalSbbDef {
   name: string;
+  namespace: string;
+  returns: Record<string, string>;
   data: () => unknown;
   states: Record<string, InternalStateDef>;
-  timeout?: {
-    delay: number;
-    then: (ctx: unknown, fx: unknown) => Transition | void;
+  timeout: {
+    delay: number | "infinity";
+    then?: (ctx: unknown, fx: unknown) => Transition | void;
   };
   cleanup?: (ctx: unknown, data: unknown) => void;
 }
@@ -101,6 +103,8 @@ interface SbbInternals {
  */
 interface SbbFrame {
   readonly block: string;
+  /** The Sbb object itself — the key the sandbox is kept under for `resume`. */
+  readonly key: object;
   readonly def: InternalSbbDef;
   readonly successor: Readonly<Record<string, string | undefined>>;
   readonly data: unknown;
@@ -183,6 +187,12 @@ export class MachineInstance<
   private readonly fx: Fx<Ev, Ctx>;
   /** The SBB stack, innermost last (spec §8.4, design §12.3). */
   private readonly sbbStack: SbbFrame[] = [];
+  /**
+   * The sandbox each block left behind, kept for `fx.sbb(b, {resume:
+   * true})` — the flag a block designed to be interrupted and re-entered
+   * needs to find its counters where it left them (design §12.2).
+   */
+  private readonly sbbSandboxes = new Map<object, unknown>();
 
   private readonly debug: boolean;
   private readonly debugLogger: (line: string) => void;
@@ -263,14 +273,16 @@ export class MachineInstance<
       sbb: (block, opts) =>
         this.enterSbb(
           block as unknown as object,
-          opts as { args?: Record<string, unknown> } | undefined,
+          opts as
+            { args?: Record<string, unknown>; resume?: boolean } | undefined,
         ),
     };
     if (frame === undefined) return base;
     const blockFx: SbbFx<AnyEvent, unknown, unknown, AnyEvent> = {
       ...(base as unknown as Fx<AnyEvent, unknown>),
       data: frame.data,
-      sbbReturn: (ev) => this.sbbReturn(frame, ev),
+      sbbReturn: (outcome, data) =>
+        this.sbbReturn(frame, outcome as string, data),
     };
     return blockFx as unknown as Fx<Ev, Ctx>;
   }
@@ -608,7 +620,7 @@ export class MachineInstance<
    */
   private enterSbb(
     block: object,
-    opts?: { args?: Record<string, unknown> },
+    opts?: { args?: Record<string, unknown>; resume?: boolean },
   ): void {
     if (this.phase !== "running") return;
     const internals = SBB_REGISTRY.get(block);
@@ -628,9 +640,14 @@ export class MachineInstance<
     // "cancelled on state exit" has not happened (design §12.4).
     this.timers.cancelAfter();
     this.timers.pushScope();
-    const seed = internals.def.data() as Record<string, unknown>;
+    // Fresh sandbox on every entry, unless the call site asks to resume:
+    // a block entered twice starts twice from nothing (design §12.2).
+    const kept =
+      opts?.resume === true ? this.sbbSandboxes.get(block) : undefined;
+    const seed = (kept ?? internals.def.data()) as Record<string, unknown>;
     const frame: SbbFrame = {
       block: internals.def.name,
+      key: block,
       def: internals.def,
       successor: internals.successor,
       data: Object.assign(seed, opts?.args ?? {}),
@@ -646,7 +663,7 @@ export class MachineInstance<
     >;
     this.sbbStack.push(frame);
     const timeout = internals.def.timeout;
-    if (timeout !== undefined) {
+    if (timeout.delay !== "infinity") {
       frame.timeoutHandle = setTimeout(
         () => this.fireSbbTimeout(frame),
         timeout.delay,
@@ -662,7 +679,7 @@ export class MachineInstance<
   }
 
   /** fx.sbbReturn: pop one frame and resume the host (spec §8.4). */
-  private sbbReturn(frame: SbbFrame, ev: AnyEvent): void {
+  private sbbReturn(frame: SbbFrame, outcome: string, data: unknown): void {
     if (this.phase !== "running") return;
     if (this.sbbStack[this.sbbStack.length - 1] !== frame) {
       // An fx captured in a closure and used after its block returned
@@ -672,6 +689,22 @@ export class MachineInstance<
       );
       return;
     }
+    // An undeclared outcome is the failure the vocabulary exists to
+    // prevent, and it is not a silence to walk past: the host would wait
+    // on a deadline for an event nobody is going to send.
+    if (!Object.hasOwn(frame.def.returns, outcome)) {
+      const known = Object.keys(frame.def.returns).join(", ");
+      this.finalize(
+        "failure",
+        `block '${frame.block}' returned undeclared outcome '${outcome}' ` +
+          `(declared: ${known})`,
+      );
+      return;
+    }
+    const ev: AnyEvent = {
+      type: `${frame.def.namespace}:${outcome}`,
+      data,
+    } as AnyEvent;
     const desc = `sbb return ${ev.type}`;
     const from = this.qual(this.stateName);
     this.popFrame(frame);
@@ -695,6 +728,9 @@ export class MachineInstance<
     frame.timeoutHandle = undefined;
     this.timers.popScope();
     this.sbbStack.pop();
+    // Keep the sandbox for a later `resume: true`. A block that is never
+    // re-entered pays one map entry per block, not per entry.
+    this.sbbSandboxes.set(frame.key, frame.data);
     this.stateName = frame.hostState;
   }
 
@@ -733,7 +769,7 @@ export class MachineInstance<
     if (this.phase !== "running") return;
     const idx = this.sbbStack.indexOf(frame);
     const spec = frame.def.timeout;
-    if (idx < 0 || spec === undefined) return;
+    if (idx < 0) return;
     frame.timeoutHandle = undefined;
     // Same discipline as an after timer: fresh chain budget, drain latch
     // held so fx.send from `then` queues instead of re-entering.
@@ -744,10 +780,17 @@ export class MachineInstance<
       // abandons that one first: the sequence it was waiting on is over.
       this.unwindSbb(`deadline of '${frame.block}'`, idx + 1);
       if (this.phase === "running") {
-        const depth = this.sbbStack.length;
-        const t = this.guard(() => spec.then(this.ctx, frame.fx));
-        if (t !== FAILED && this.stillOurs(t, depth)) {
-          this.applyTransition(t, AFTER_EVENT);
+        if (spec.then === undefined) {
+          // No handler: the deadline is an outcome like any other, so the
+          // host has one clause to write and no special case (spec §8.4).
+          this.sbbReturn(frame, "timeout", { block: frame.block });
+        } else {
+          const depth = this.sbbStack.length;
+          const then = spec.then;
+          const t = this.guard(() => then(this.ctx, frame.fx));
+          if (t !== FAILED && this.stillOurs(t, depth)) {
+            this.applyTransition(t, AFTER_EVENT);
+          }
         }
       }
     } finally {

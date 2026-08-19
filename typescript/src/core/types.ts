@@ -54,6 +54,53 @@ export type ChildExit = {
 };
 
 /**
+ * What a Service Building Block hands back (spec §8.4): the namespace it
+ * declares, an outcome, and a map — the three slots of the Elixir dialect's
+ * `{namespace, outcome, data}`, spelled as one event this dialect can
+ * dispatch on.
+ *
+ * The arity is fixed on purpose. A block that learns to report one more
+ * thing adds a key to `data`, which is invisible to a host that does not
+ * read it; a fourth slot would break every host matching the old shape.
+ *
+ *     type CallReturn =
+ *       | SbbReturn<"call", "connected", { uri: string; code: number }>
+ *       | SbbReturn<"call", "rejected", { code: number; reason: string }>;
+ */
+export type SbbReturn<
+  Ns extends string,
+  O extends string,
+  D = Record<string, never>,
+> = {
+  type: `${Ns}:${O}`;
+  data: D;
+};
+
+/**
+ * The namespace a block's return union speaks — `"call"` for the union
+ * above. Used to type `SbbDef.namespace`, so the declaration and the
+ * events cannot drift apart.
+ */
+export type SbbNamespace<Ret extends AnyEvent> = Ret extends {
+  type: `${infer N}:${string}`;
+}
+  ? N
+  : never;
+
+/** The outcomes a block's return union declares — `"connected" | "rejected"`. */
+export type SbbOutcome<Ret extends AnyEvent> = Ret extends {
+  type: `${string}:${infer O}`;
+}
+  ? O
+  : never;
+
+/** The `data` map that goes with one outcome of a return union. */
+export type SbbData<Ret extends AnyEvent, O extends string> =
+  Extract<Ret, { type: `${string}:${O}` }> extends { data: infer D }
+    ? D
+    : never;
+
+/**
  * Effects facade passed to `enter` and to event handlers (design §3.4).
  *
  * `Ctx` is the host context type. It is only load-bearing for `sbb`,
@@ -110,10 +157,16 @@ export interface Fx<Ev extends AnyEvent, Ctx = unknown> {
    * requires, and every event the block can return must be part of the
    * host's event union — an outcome the host cannot match is the
    * silence this layer exists to prevent.
+   *
+   * `resume: true` keeps the sandbox the same block left behind on its
+   * previous entry, which is what a block designed to be interrupted and
+   * re-entered needs; without it the sandbox is fresh, so a hunt calling
+   * one block on target after target cannot inherit the last attempt's
+   * scratch.
    */
   sbb<E extends AnyEvent, D, Ret extends Ev>(
     block: Sbb<Ctx, E, D, Ret>,
-    opts?: { args?: Partial<D> },
+    opts?: { args?: Partial<D>; resume?: boolean },
   ): void;
 }
 
@@ -137,11 +190,18 @@ export interface SbbFx<
   /**
    * Pop the block and hand control back to the host state as a
    * `stay()`: the host's `enter` does not re-run, and its `after` is
-   * armed afresh. `ev` is posted to the machine — and it is **not**
-   * privileged: whatever the block left pending is replayed first, in
-   * arrival order.
+   * armed afresh.
+   *
+   * The block names an outcome and hands over a map; the event posted to
+   * the machine is `{ type: "<namespace>:<outcome>", data }`. An outcome
+   * the block did not declare in `returns` is refused — a mistyped one
+   * does not crash, it leaves the host waiting on a deadline for an event
+   * nobody will ever send.
+   *
+   * The returned event is **not** privileged: whatever the block left
+   * pending is replayed first, in arrival order.
    */
-  sbbReturn(ev: Ret): void;
+  sbbReturn<O extends SbbOutcome<Ret>>(outcome: O, data: SbbData<Ret, O>): void;
 }
 
 /**
@@ -247,9 +307,27 @@ export interface SbbDef<
   /** For logs, devtools, diagram export; qualifies the block's states. */
   name: string;
   /**
+   * The first half of the block's vocabulary: the word its returns lead
+   * with, so a host reading `"call:connected"` knows at a glance what
+   * happened and tells two blocks called from the same state apart.
+   *
+   * It follows the verb a host writes, not the module path — the same
+   * rule as the Elixir dialect's `@sbb_namespace`.
+   */
+  namespace: SbbNamespace<Ret>;
+  /**
+   * The other half: every outcome the block can return, and what it
+   * means. The declaration is load-bearing rather than documentary —
+   * `fx.sbbReturn` refuses an outcome that is not here, and the record
+   * being exhaustive over the return union means a block cannot grow an
+   * outcome it forgot to document.
+   */
+  returns: Record<SbbOutcome<Ret>, string>;
+  /**
    * Factory for the block's private sandbox, fresh on every entry
    * (design §12.2) — a block entered twice starts twice from nothing,
    * which a hunt calling the same block on target after target needs.
+   * `fx.sbb(block, { resume: true })` is the explicit exception.
    */
   data: () => Data;
   /** Ordered record of states, exactly as a machine's (spec §3.1). */
@@ -258,11 +336,22 @@ export interface SbbDef<
    * The block's own deadline, armed on entry and running across all of
    * its states (spec §8.4) — the host's `after` is suspended, so a
    * block that says nothing can never hold the machine for ever.
-   * `then` is expected to end on `fx.sbbReturn` or on a terminal.
+   *
+   * It is **required**, and `delay: "infinity"` is how a block says it
+   * has no bound of its own — the relay that ends when the dialog ends.
+   * Making the author decide is the point: an unbounded block that was
+   * not meant to be one is the silence this layer exists to prevent.
+   *
+   * `then` is optional. Without it the deadline is an outcome like any
+   * other: the block returns `{namespace}:timeout` with `{ block }`, so
+   * the host has one clause to write and no special case. Declaring
+   * `timeout` in `returns` is then mandatory, checked at define time.
+   * With it, `then` decides, and is expected to end on `fx.sbbReturn`
+   * or on a terminal.
    */
-  timeout?: {
-    delay: number;
-    then: (
+  timeout: {
+    delay: number | "infinity";
+    then?: (
       ctx: Ctx,
       fx: SbbFx<Ev, Ctx, Data, Ret>,
     ) => Transition<NoInfer<SN>> | void;
@@ -291,6 +380,10 @@ export interface Sbb<
   SN extends string = string,
 > {
   readonly name: string;
+  /** The word its returns lead with — the machine-readable half of §8.4. */
+  readonly namespace: string;
+  /** Outcome → what it means: what this block can send, for whatever wants to show it. */
+  readonly returns: Readonly<Record<string, string>>;
   /**
    * Phantoms: none of them exists at run time. A type parameter that
    * appears nowhere in the structure is invisible to assignability, so

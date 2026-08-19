@@ -717,6 +717,12 @@ The spec fixed its contract before either dialect implemented it; this
 section is how that contract is met here, and where the mechanism differs
 from the Elixir dialect on purpose.
 
+The convergence pass 0.2.0 carries narrowed that "on purpose"
+considerably. The two dialects now share
+the return shape, the declared vocabulary and the block-level bound, and
+what is left different is listed in §12.8 with the reason each difference
+has.
+
 ### 12.1 One machine, a stack of definitions
 
 `fx.spawn` starts a *second machine*. `fx.sbb` calls a *subroutine*: the
@@ -751,6 +757,13 @@ previous attempt's scratch.
 
 What a block wants to hand back it puts in the event it returns.
 
+The sandbox is kept after the block leaves, keyed by the block object, so
+`fx.sbb(block, { resume: true })` can hand it back on the next entry —
+the flag a block designed to be interrupted and re-entered needs to find
+its counters where it left them. One map entry per block, not per entry,
+and reading it is opt-in: without `resume` the factory runs afresh, which
+is what a hunt calling one block on target after target requires.
+
 TypeScript then gives for free what Elixir has to check by hand. `Sbb`
 carries a phantom per type parameter, `__requires` in contravariant
 position, so:
@@ -765,6 +778,37 @@ position, so:
 A phantom that appears nowhere in the structure is invisible to
 assignability, which is why all five are declared: without them the
 compiler would infer and check nothing.
+
+### 12.2b The declared vocabulary, and how the two dialects check it
+
+`namespace` and `returns` are the block's public API, and `sbbReturn`
+composes the event from them: `{ type: `${namespace}:${outcome}`, data }`.
+Nothing else can be returned, which is what makes a return recognisable
+at a glance and two blocks called from the same state distinguishable by
+their first word.
+
+The checks land in three places, and it is worth saying which does what
+because no single one of them is enough:
+
+- **the type of `returns`** is `Record<SbbOutcome<Ret>, string>`, so a
+  block that declares an outcome in its union and forgets to document it
+  does not compile. Elixir has no equivalent — `@sbb_returns` is the
+  union there, not a second statement of it;
+- **the type of `sbbReturn`** derives its `outcome` parameter from the
+  same union, so a typo is a compile error. This is the half Elixir does
+  in `sbb_return/1` at macro-expansion time;
+- **the run-time check** in `sbbReturn` fails the machine on an
+  undeclared outcome, naming what *is* declared. It exists for the plain
+  JS half of §2.1, where neither of the two above runs, and the failure
+  it replaces is the silence the whole layer is about.
+
+`timeout` is required rather than defaulted. Elixir defaults to 32 s
+because timer B is a real bound of the protocol it serves; a browser
+block has no such number, and picking one would be a default that is
+always either wrong or invisible. `{ delay: "infinity" }` is the explicit
+opt-out, and a bounded block with no `timeout.then` gets its `timeout`
+outcome checked at define time rather than at expiry — the one moment
+where "declare it or handle it" can still be said cheaply.
 
 ### 12.3 Entering, returning, unwinding
 
@@ -848,13 +892,39 @@ A cooperative shutdown reaching a block unwinds it — running each block's
 the block instead would skip the hook where the host frees what the run
 reserved, and leak it.
 
-### 12.7 The diagram subpath
+### 12.7 What still differs from the Elixir dialect
+
+After 0.2.0, four things — each because the two runtimes differ, never
+because the two designs disagree:
+
+| Difference | Here | Elixir | Why |
+|---|---|---|---|
+| where `fx.sbb` may be called | `enter`, a handler, an `after.then` | state body only, refused in an `on_events` clause | the deadline is relative here and absolute there (§12.4) |
+| the bound's default | required, no default | 32 s, timer B | a browser block has no protocol bound to inherit |
+| the pending queue | bounded (32), inspectable, drops the oldest with a warning | the BEAM mailbox: unbounded, opaque | same observable contract, opposite behaviour under load |
+| recursion guard | `MAX_SBB_DEPTH` = 16 | the BEAM call stack | a JS stack overflow names nothing |
+
+### 12.8 The diagram subpath
 
 `defineSbb` definitions are extracted like machines, tagged
-`kind: "block"`. Inside a block, `fx.sbbReturn({type})` draws an edge to
-`[*]` labelled by the event: leaving a block is leaving the diagram it is
-drawn in. A block-level `timeout` is a trigger of every one of its
-states.
+`kind: "block"`. Inside a block, `fx.sbbReturn("outcome", …)` draws an
+edge to `[*]` labelled `namespace:outcome` — the extractor reads the
+namespace off the block's own `namespace:` property, so the label is the
+event the host will actually match. Leaving a block is leaving the
+diagram it is drawn in.
+
+A block-level `timeout` is a trigger of every one of its states, with two
+cases the runtime distinguishes and so does the drawing: a `timeout.then`
+is walked like any handler, and a `timeout` without one draws the edge
+directly, labelled with the `namespace:timeout` it returns. A
+`{ delay: "infinity" }` draws nothing, because nothing is armed.
+
+An `on` map may be assembled from a shared fragment —
+`on: { ...interruptions(), "ui:go": … }` — and the spread is resolved when
+it is a call to a module-level helper returning an object literal. Not
+resolving it drew the machine with no arrow for the events it answers in
+*every* state, which is precisely the half a reader needs; the state's own
+clause wins over the fragment's, as it does at run time.
 
 In a host, `fx.sbb(Block)` is recorded per state in `graph.blocks` and
 rendered as a state description. It is the one thing `renderMermaid`

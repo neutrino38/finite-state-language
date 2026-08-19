@@ -119,6 +119,8 @@ function collect(
   node: ts.Node,
   helpers: Map<string, ts.FunctionDeclaration>,
   seen: Set<string>,
+  /** The enclosing block's declared namespace, for labelling its returns. */
+  namespace?: string,
 ): Reachable {
   const outcomes: Outcome[] = [];
   const blocks: string[] = [];
@@ -128,7 +130,7 @@ function collect(
     const fn = helpers.get(name);
     if (fn?.body === undefined || seen.has(name)) return;
     seen.add(name);
-    const inner = collect(fn.body, helpers, seen);
+    const inner = collect(fn.body, helpers, seen, namespace);
     outcomes.push(...inner.outcomes);
     blocks.push(...inner.blocks);
     forwards = forwards || inner.forwards;
@@ -154,7 +156,18 @@ function collect(
         // one thing about a subroutine call the source always states.
         if (!blocks.includes(arg.text)) blocks.push(arg.text);
       } else if (effect === "sbbReturn") {
-        outcomes.push({ kind: "return", event: eventType(arg) });
+        // `fx.sbbReturn("connected", {…})` — the outcome is the first
+        // argument, and the namespace comes from the block's declaration.
+        const outcome = literal(arg);
+        outcomes.push({
+          kind: "return",
+          event:
+            outcome === undefined
+              ? undefined
+              : namespace === undefined
+                ? outcome
+                : `${namespace}:${outcome}`,
+        });
       }
     } else if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
       const [first, second] = n.arguments;
@@ -184,15 +197,6 @@ function collect(
 
   visit(node);
   return { outcomes, forwards, blocks };
-}
-
-/** `fx.sbbReturn({ type: "call:connected", … })` → `"call:connected"`. */
-function eventType(arg: ts.Expression | undefined): string | undefined {
-  if (arg === undefined || !ts.isObjectLiteralExpression(arg)) return undefined;
-  const typeProp = property(arg, "type");
-  return typeProp !== undefined && ts.isPropertyAssignment(typeProp)
-    ? literal(typeProp.initializer)
-    : undefined;
 }
 
 /** `90_000` → `after 90 s`, `3500` → `after 3500 ms`. */
@@ -230,7 +234,10 @@ function objectProperty(
     : undefined;
 }
 
-function triggersOf(state: ts.ObjectLiteralExpression): Trigger[] {
+function triggersOf(
+  state: ts.ObjectLiteralExpression,
+  helpers: Map<string, ts.FunctionDeclaration>,
+): Trigger[] {
   const triggers: Trigger[] = [];
 
   const enterDef = property(state, "enter");
@@ -240,7 +247,7 @@ function triggersOf(state: ts.ObjectLiteralExpression): Trigger[] {
 
   const on = objectProperty(state, "on");
   if (on !== undefined) {
-    for (const clause of on.properties) {
+    for (const clause of onClauses(on, helpers)) {
       const handler = value(clause);
       if (clause.name === undefined || handler === undefined) continue;
       triggers.push({ label: key(clause.name), node: handler, isEvent: true });
@@ -262,6 +269,61 @@ function triggersOf(state: ts.ObjectLiteralExpression): Trigger[] {
   }
 
   return triggers;
+}
+
+/**
+ * The clauses of an `on` map, spreads resolved. States that share a set
+ * of clauses write them once — `on: { ...interruptions(), … }` — and the
+ * shared half is exactly the half a reader most needs drawn: it is what
+ * *every* state answers. A spread left unresolved would draw a machine
+ * with no arrow for the events it handles everywhere.
+ *
+ * Only a spread of a call to a module-level helper that returns an object
+ * literal is followed, which is the shape such a fragment takes. A spread
+ * of anything else is skipped rather than guessed at.
+ */
+function onClauses(
+  on: ts.ObjectLiteralExpression,
+  helpers: Map<string, ts.FunctionDeclaration>,
+  depth = 0,
+): ts.ObjectLiteralElementLike[] {
+  if (depth > 8) return []; // a fragment spreading itself
+  // A Map keyed by event type reproduces the run-time rule in one line:
+  // later wins, so a state's own clause overrides the fragment's.
+  const clauses = new Map<string, ts.ObjectLiteralElementLike>();
+  for (const p of on.properties) {
+    if (ts.isSpreadAssignment(p)) {
+      const fragment = returnedObject(p.expression, helpers);
+      if (fragment === undefined) continue;
+      for (const c of onClauses(fragment, helpers, depth + 1)) {
+        if (c.name !== undefined) clauses.set(key(c.name), c);
+      }
+      continue;
+    }
+    if (p.name !== undefined) clauses.set(key(p.name), p);
+  }
+  return [...clauses.values()];
+}
+
+/** `interruptions("x")` → the object literal its helper returns, if any. */
+function returnedObject(
+  expr: ts.Expression,
+  helpers: Map<string, ts.FunctionDeclaration>,
+): ts.ObjectLiteralExpression | undefined {
+  if (!ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) {
+    return undefined;
+  }
+  const fn = helpers.get(expr.expression.text);
+  if (fn?.body === undefined) return undefined;
+  for (const st of fn.body.statements) {
+    if (ts.isReturnStatement(st) && st.expression !== undefined) {
+      const returned = ts.isParenthesizedExpression(st.expression)
+        ? st.expression.expression
+        : st.expression;
+      if (ts.isObjectLiteralExpression(returned)) return returned;
+    }
+  }
+  return undefined;
 }
 
 interface Definition {
@@ -344,23 +406,31 @@ function graphOf(
   const blocks: StateEvents[] = [];
 
   // A block-level `timeout` bounds every state of the block, so it is a
-  // trigger of each of them (spec §8.4).
+  // trigger of each of them (spec §8.4). A block declaring no `then`
+  // returns `<namespace>:timeout` on expiry, which is an edge out with
+  // no handler to walk — so it is drawn directly.
+  const namespace = kind === "block" ? declaredNamespace(def) : undefined;
   const blockTimeout = kind === "block" ? timeoutTrigger(def) : undefined;
+  const implicitTimeout =
+    kind === "block" && blockTimeout === undefined
+      ? implicitTimeoutLabel(def, namespace)
+      : undefined;
 
   members.forEach(({ name: state, body }, index) => {
     const forwardedHere: string[] = [];
     const consumedHere: string[] = [];
     const blocksHere: string[] = [];
 
-    const triggers = triggersOf(body);
+    const triggers = triggersOf(body, helpers);
     if (blockTimeout !== undefined) triggers.push(blockTimeout);
+    if (implicitTimeout !== undefined) addEdge(state, END, implicitTimeout);
 
     for (const trigger of triggers) {
       const {
         outcomes,
         forwards,
         blocks: entered,
-      } = collect(trigger.node, helpers, new Set());
+      } = collect(trigger.node, helpers, new Set(), namespace);
       for (const b of entered) if (!blocksHere.includes(b)) blocksHere.push(b);
       if (outcomes.length === 0) {
         if (trigger.isEvent && entered.length === 0)
@@ -424,11 +494,40 @@ function timeoutTrigger(def: ts.ObjectLiteralExpression): Trigger | undefined {
   const then = property(timeout, "then");
   const thenBody = then && value(then);
   if (!delay || !ts.isPropertyAssignment(delay) || !thenBody) return undefined;
+  if (literal(delay.initializer) === "infinity") return undefined;
   return {
     label: delayLabel(delay.initializer),
     node: thenBody,
     isEvent: false,
   };
+}
+
+/** `namespace: "call"` on a block definition. */
+function declaredNamespace(
+  def: ts.ObjectLiteralExpression,
+): string | undefined {
+  const ns = property(def, "namespace");
+  return ns !== undefined && ts.isPropertyAssignment(ns)
+    ? literal(ns.initializer)
+    : undefined;
+}
+
+/**
+ * The edge label a bounded block with no `timeout.then` leaves on every
+ * state: expiry returns `<namespace>:timeout`, and the way out of a
+ * block is the way out of its diagram.
+ */
+function implicitTimeoutLabel(
+  def: ts.ObjectLiteralExpression,
+  namespace: string | undefined,
+): string | undefined {
+  const timeout = objectProperty(def, "timeout");
+  if (timeout === undefined) return undefined;
+  const delay = property(timeout, "delay");
+  if (!delay || !ts.isPropertyAssignment(delay)) return undefined;
+  if (literal(delay.initializer) === "infinity") return undefined;
+  const event = namespace === undefined ? "timeout" : `${namespace}:timeout`;
+  return `${delayLabel(delay.initializer)} (${event})`;
 }
 
 /**

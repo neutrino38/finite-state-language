@@ -3,14 +3,23 @@
 All notable changes to `finite-state-language` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/)
-(everything below 0.2 is `@experimental` — the API is still soft).
+(the API is still `@experimental` and soft — 0.2 marks the arrival of the
+Service Building Block layer, not the freeze 0.1.2 had reserved the
+number for).
 
-## [0.1.3] — 2026-08-19
+## [0.2.0] — 2026-08-19
 
 Service Building Blocks, reserved in the spec since §8.4 was written and
-now implemented. Additive: nothing existing changes behaviour, and the
-pending queue of §4.2 is untouched — which was the point of choosing a
-stack of definitions over anything cleverer.
+now implemented — in the shape both dialects of FSL agree on:
+`finite-state-language` here and Elixip's DSL on the BEAM. The rule is
+recorded in the spec (§11, decision 5) and the shared table lives in
+[`elixip/docs/design/DESIGN-SBB.md`](https://github.com/neutrino38/elixip/blob/master/docs/design/DESIGN-SBB.md)
+§10: a concept present in both dialects is spelled the same in both.
+
+Additive over 0.1.2 — nothing existing changes behaviour, and the pending
+queue of §4.2 is untouched, which was the point of choosing a stack of
+definitions over anything cleverer. The minor bump buys the new layer
+room to move before the API stops being experimental.
 
 ### Added
 
@@ -27,10 +36,11 @@ stack of definitions over anything cleverer.
   `enter` does not re-run on return, and its `after` is suspended for the
   duration and armed afresh afterwards.
 
-  Two things the compiler now checks that no runtime can: a host whose
+  Three things the compiler checks that no runtime can: a host whose
   context does not provide what a block declares it requires does not
-  compile, and neither does a host with no clause for what the block can
-  return. That second one is the failure the layer exists to prevent — an
+  compile; neither does a host with no clause for what the block can
+  return; and `returns` has to document every outcome of the return
+  union. The second one is the failure the layer exists to prevent — an
   outcome nobody matches leaves the host waiting on a deadline for an
   event that never comes, a silence with nothing in the log.
 
@@ -39,6 +49,49 @@ stack of definitions over anything cleverer.
   `timeout`. `fx.sbbReturn` is the only way back: `failure()` and
   `aborted()` keep their ordinary meaning and end the whole machine, host
   included, running each block's `cleanup` on the way out.
+
+- **A block declares the vocabulary it talks back with, and a return is
+  `{ type: "namespace:outcome", data }` — nothing else.** `namespace` is
+  the word every return leads with; `returns` maps each outcome to what
+  it means, and the type requires it to be exhaustive, so a block cannot
+  grow an outcome nobody wrote down. Both are published on the block
+  (`block.namespace`, `block.returns`), the counterpart of Elixir's
+  `__sbb_namespace__/0` and `__sbb_returns__/0`, so a tool can show what
+  a block can send.
+
+  `fx.sbbReturn(outcome, data)` names an outcome and hands over a map;
+  the runtime builds the event from the declared namespace, and an
+  outcome the block did not declare fails the machine with a reason
+  naming it and listing what *is* declared — the JavaScript half of the
+  compile-time refusal Elixir does in `sbb_return/1`.
+
+  The arity is fixed, for the reason it was fixed on the BEAM: a block
+  that learns to report one more thing adds a key to `data`, invisible to
+  a host that does not read it, where a fourth slot would break every
+  host matching the old shape.
+
+- **`timeout` is required, and takes `delay: number | "infinity"`.**
+  Elixir bounds every block by default at 32 s — timer B, which a browser
+  does not have — so rather than inventing a default this dialect makes
+  the author decide. `{ delay: "infinity" }` is how a block says it ends
+  on an event and never on a clock, the shape Elixir writes
+  `@sbb_timeout :infinity`.
+
+  `timeout.then` is optional. Without it the deadline is an outcome like
+  any other: the block returns `{namespace}:timeout` with `{ block }`, so
+  the host has one clause to write and no special case — Elixir's "a
+  bounded block gets `:timeout` in its vocabulary for free". A bounded
+  block that declares no `timeout` outcome and no `then` is refused at
+  define time rather than at expiry.
+
+- **`fx.sbb(block, { resume: true })`** keeps the sandbox the block left
+  behind on its previous entry, for a block designed to be interrupted
+  and re-entered — Elixir's `sbb_fsm(module, resume: true)`. Without it
+  the sandbox is fresh.
+
+- **`SbbReturn`, `SbbNamespace`, `SbbOutcome`, `SbbData`** are exported:
+  the first writes a block's return union, the other three are what
+  `SbbDef` and `sbbReturn` derive their checks from.
 
 - **`snapshot.sbb` / `instance.sbb`, and `sbb` from `useMachine`.** While
   a block runs, `state` stays the host's — a subroutine call is not a
@@ -55,6 +108,15 @@ stack of definitions over anything cleverer.
   box — a state that enters a block has no outgoing edge until it
   returns, so leaving it out drew a dead end exactly where the sequence
   was.
+
+- **`finite-state-language/diagram` resolves a spread in `on`.** States
+  that share a set of clauses write them once —
+  `on: { ...interruptions(), "ui:go": … }` — and until now the shared half
+  was invisible to the extractor: the machine drew with no arrow for the
+  events it answers *everywhere*, which is the opposite of what a reader
+  needs. A spread of a call to a module-level helper returning an object
+  literal is now followed, and the state's own clause overrides the
+  fragment's, as it does at run time.
 
 ### Fixed
 

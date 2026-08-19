@@ -34,8 +34,12 @@ export type {
   Outcome,
   ParentMsg,
   Sbb,
+  SbbData,
   SbbDef,
   SbbFx,
+  SbbNamespace,
+  SbbOutcome,
+  SbbReturn,
   SbbView,
   Snapshot,
   StartOpts,
@@ -46,4 +50,4 @@ export type {
 } from "./core/types.js";
 export type { LogEntry } from "./core/log.js";
 
-export const VERSION = "0.1.3";
+export const VERSION = "0.2.0";
