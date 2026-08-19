@@ -53,8 +53,14 @@ export type ChildExit = {
   reason?: string;
 };
 
-/** Effects facade passed to `enter` and to event handlers (design §3.4). */
-export interface Fx<Ev extends AnyEvent> {
+/**
+ * Effects facade passed to `enter` and to event handlers (design §3.4).
+ *
+ * `Ctx` is the host context type. It is only load-bearing for `sbb`,
+ * which uses it to reject a block the host cannot satisfy; every other
+ * effect ignores it.
+ */
+export interface Fx<Ev extends AnyEvent, Ctx = unknown> {
   /** Self-send: enqueued, processed after the current event (spec §4.3). */
   send(ev: Ev): void;
   /**
@@ -92,6 +98,50 @@ export interface Fx<Ev extends AnyEvent> {
    * A no-op without a parent, so the same machine runs standalone.
    */
   notifyParent(payload: unknown): void;
+  /**
+   * Enter a Service Building Block (spec §8.4): a subroutine call, not
+   * a second actor. This machine is suspended at the call site — its
+   * `enter` will not re-run and its `after` is cancelled — while the
+   * block handles every event, until the block calls `fx.sbbReturn`.
+   *
+   * The block shares this machine's context and gets a private sandbox
+   * of its own, seeded by `args`. Two things are checked at compile
+   * time: the host context must provide what the block declares it
+   * requires, and every event the block can return must be part of the
+   * host's event union — an outcome the host cannot match is the
+   * silence this layer exists to prevent.
+   */
+  sbb<E extends AnyEvent, D, Ret extends Ev>(
+    block: Sbb<Ctx, E, D, Ret>,
+    opts?: { args?: Partial<D> },
+  ): void;
+}
+
+/**
+ * The effects facade inside a block: everything a machine gets, plus
+ * its private sandbox and the one way back (spec §8.4).
+ */
+export interface SbbFx<
+  Ev extends AnyEvent,
+  Ctx,
+  Data,
+  Ret extends AnyEvent,
+> extends Fx<Ev, Ctx> {
+  /**
+   * The block's private scratch space (design §12.2), seeded by the
+   * `args` of the call site and cleared on every entry. Mutate it
+   * freely: no host and no sibling block can see it, which is why
+   * writing here can never clobber anything.
+   */
+  readonly data: Data;
+  /**
+   * Pop the block and hand control back to the host state as a
+   * `stay()`: the host's `enter` does not re-run, and its `after` is
+   * armed afresh. `ev` is posted to the machine — and it is **not**
+   * privileged: whatever the block left pending is replayed first, in
+   * arrival order.
+   */
+  sbbReturn(ev: Ret): void;
 }
 
 /**
@@ -105,36 +155,43 @@ export type Handler<
   Ev extends AnyEvent,
   E extends AnyEvent,
   SN extends string,
-> = (ev: E, ctx: Ctx, fx: Fx<Ev>) => Transition<NoInfer<SN>> | void;
+  F = Fx<Ev, Ctx>,
+> = (ev: E, ctx: Ctx, fx: F) => Transition<NoInfer<SN>> | void;
 
 /**
  * Event-type → handler map (spec §3.2). A string value is a shorthand:
  * move to that state, then re-dispatch the event there (design §11.2).
  * `"*"` is the catch-all clause.
  */
-export type OnMap<Ctx, Ev extends AnyEvent, SN extends string> = {
+export type OnMap<
+  Ctx,
+  Ev extends AnyEvent,
+  SN extends string,
+  F = Fx<Ev, Ctx>,
+> = {
   [T in Ev["type"]]?:
-    Handler<Ctx, Ev, Extract<Ev, { type: T }>, SN> | NoInfer<SN>;
-} & { "*"?: Handler<Ctx, Ev, Ev, SN> | NoInfer<SN> };
+    Handler<Ctx, Ev, Extract<Ev, { type: T }>, SN, F> | NoInfer<SN>;
+} & { "*"?: Handler<Ctx, Ev, Ev, SN, F> | NoInfer<SN> };
 
 export interface StateDef<
   Ctx,
   Ev extends AnyEvent,
   SN extends string = string,
+  F = Fx<Ev, Ctx>,
 > {
   /**
    * Synchronous set-up code, executed each time the state is entered
    * (including on `loop()`). Must never block (spec §3.2).
    */
-  enter?: (ctx: Ctx, fx: Fx<Ev>) => Transition<NoInfer<SN>> | void;
-  on?: OnMap<Ctx, Ev, SN>;
+  enter?: (ctx: Ctx, fx: F) => Transition<NoInfer<SN>> | void;
+  on?: OnMap<Ctx, Ev, SN, F>;
   /**
    * One timer, armed when the state is entered, cancelled on exit,
    * re-armed on `loop()` — the Elixir `after` clause (spec §3.2).
    */
   after?: {
     delay: number;
-    then: (ctx: Ctx, fx: Fx<Ev>) => Transition<NoInfer<SN>> | void;
+    then: (ctx: Ctx, fx: F) => Transition<NoInfer<SN>> | void;
   };
   /** Free-form UI hints, exposed as `snapshot.meta` (spec §7.3). */
   meta?: Record<string, unknown>;
@@ -164,9 +221,112 @@ export interface MachineDef<
    * the machine keeps running toward its own end), or nothing
    * (⇒ aborted with the shutdown reason).
    */
-  onShutdown?: (ctx: Ctx, fx: Fx<Ev>) => Transition<NoInfer<SN>> | void;
+  onShutdown?: (ctx: Ctx, fx: Fx<Ev, Ctx>) => Transition<NoInfer<SN>> | void;
   /** Called after any terminal transition, before `done` settles (spec §8.3). */
   cleanup?: (ctx: Ctx) => void;
+}
+
+/**
+ * Definition of a Service Building Block (spec §8.4, design §12).
+ *
+ * A block is written in FSL like any machine, and differs in what it
+ * owns: it has no context of its own — it works on the host's — and it
+ * ends its branches on `fx.sbbReturn` instead of on a terminal.
+ *
+ * `Ctx` is a *requirement*, not a possession: it says what the block
+ * needs to find in whichever host calls it, and `fx.sbb` refuses a host
+ * that does not provide it. Declare the smallest shape that works.
+ */
+export interface SbbDef<
+  Ctx,
+  Ev extends AnyEvent,
+  Data,
+  Ret extends AnyEvent,
+  SN extends string = string,
+> {
+  /** For logs, devtools, diagram export; qualifies the block's states. */
+  name: string;
+  /**
+   * Factory for the block's private sandbox, fresh on every entry
+   * (design §12.2) — a block entered twice starts twice from nothing,
+   * which a hunt calling the same block on target after target needs.
+   */
+  data: () => Data;
+  /** Ordered record of states, exactly as a machine's (spec §3.1). */
+  states: Record<SN, StateDef<Ctx, Ev, SN, SbbFx<Ev, Ctx, Data, Ret>>>;
+  /**
+   * The block's own deadline, armed on entry and running across all of
+   * its states (spec §8.4) — the host's `after` is suspended, so a
+   * block that says nothing can never hold the machine for ever.
+   * `then` is expected to end on `fx.sbbReturn` or on a terminal.
+   */
+  timeout?: {
+    delay: number;
+    then: (
+      ctx: Ctx,
+      fx: SbbFx<Ev, Ctx, Data, Ret>,
+    ) => Transition<NoInfer<SN>> | void;
+  };
+  /**
+   * Called when the block is left through a terminal or a shutdown —
+   * never on an ordinary `sbbReturn`, which is a normal ending the
+   * block's own branch already handled. The place to release what the
+   * block reserved, so unwinding past it does not leak.
+   */
+  cleanup?: (ctx: Ctx, data: Data) => void;
+}
+
+/**
+ * A defined block, callable through `fx.sbb` (spec §8.4).
+ *
+ * `__requires` is a phantom: it never exists at run time. Its
+ * contravariant position is what makes `fx.sbb(block)` reject a host
+ * whose context does not satisfy the block's `Ctx`.
+ */
+export interface Sbb<
+  Ctx,
+  Ev extends AnyEvent,
+  Data,
+  Ret extends AnyEvent,
+  SN extends string = string,
+> {
+  readonly name: string;
+  /**
+   * Phantoms: none of them exists at run time. A type parameter that
+   * appears nowhere in the structure is invisible to assignability, so
+   * without these `fx.sbb` would infer and check nothing.
+   *
+   * `__requires` is contravariant on purpose — that is what makes a
+   * block assignable only to a host whose context satisfies it.
+   */
+  readonly __requires: (ctx: Ctx) => void;
+  readonly __handles: (ev: Ev) => void;
+  readonly __data: Data;
+  readonly __returns: Ret;
+  readonly __states: SN;
+  /** Static structure export, as `Machine.toMermaid()` (spec §6.1). */
+  toMermaid(): string;
+}
+
+/**
+ * Where a machine is inside a block (spec §8.4, design §12.5). The
+ * innermost block, because that is where the machine actually is; the
+ * chain of enclosing ones is not worth a field that has to fit a
+ * terminal.
+ */
+export interface SbbView {
+  /** The block's `name`. */
+  readonly block: string;
+  /** The state the block is in, unqualified. */
+  readonly state: string;
+  /** 1 for a block called by the host, 2 for one it called in turn. */
+  readonly depth: number;
+  /**
+   * The block state's `meta`. `snapshot.meta` stays the host's, so a
+   * view that follows a block reads its hints here and the two never
+   * disagree about which state they describe.
+   */
+  readonly meta?: Record<string, unknown>;
 }
 
 export interface StartOpts<Ctx> {
@@ -194,10 +354,17 @@ export interface Snapshot<
   Ev extends AnyEvent,
   SN extends string = string,
 > {
+  /**
+   * The host state. A running block does not change it: a subroutine
+   * call is not a state its caller declared, and reporting one would
+   * make the machine look like it jumped somewhere it cannot go.
+   */
   readonly state: SN | TerminalStateName;
   readonly context: Ctx;
   readonly pending: readonly Ev[];
   readonly meta?: Record<string, unknown>;
+  /** Set while a block runs (spec §8.4): where inside it the machine is. */
+  readonly sbb?: SbbView;
 }
 
 export interface TransitionNotification<
@@ -209,6 +376,8 @@ export interface TransitionNotification<
   readonly context: Ctx;
   readonly event?: Ev;
   readonly desc?: string;
+  /** Set while a block runs (spec §8.4). */
+  readonly sbb?: SbbView;
 }
 
 export type Listener<Ctx, Ev extends AnyEvent, SN extends string = string> = (
@@ -228,6 +397,8 @@ export interface Instance<
 > {
   readonly state: SN | TerminalStateName;
   readonly context: Ctx;
+  /** Where inside a block the machine is, or undefined (spec §8.4). */
+  readonly sbb: SbbView | undefined;
   readonly done: Promise<DoneResult>;
   readonly log: readonly LogEntry[];
   readonly pending: readonly Ev[];

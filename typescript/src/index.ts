@@ -6,6 +6,7 @@
  */
 
 export { defineMachine } from "./core/define.js";
+export { defineSbb } from "./core/sbb.js";
 export {
   goto,
   next,
@@ -32,6 +33,10 @@ export type {
   OnMap,
   Outcome,
   ParentMsg,
+  Sbb,
+  SbbDef,
+  SbbFx,
+  SbbView,
   Snapshot,
   StartOpts,
   StateDef,
@@ -41,4 +46,4 @@ export type {
 } from "./core/types.js";
 export type { LogEntry } from "./core/log.js";
 
-export const VERSION = "0.1.1";
+export const VERSION = "0.1.3";

@@ -707,3 +707,157 @@ Decisions made here that the spec should absorb in its next revision:
 Open question inherited from spec §11 (meta merging) is deferred: v1 exposes
 the raw per-state `meta` block, unmerged — the simplest behaviour that the
 open discussion can later extend compatibly.
+
+---
+
+## 12. Service building blocks (spec §8.4)
+
+A block is a reusable fragment of a state machine behind a callable face.
+The spec fixed its contract before either dialect implemented it; this
+section is how that contract is met here, and where the mechanism differs
+from the Elixir dialect on purpose.
+
+### 12.1 One machine, a stack of definitions
+
+`fx.spawn` starts a *second machine*. `fx.sbb` calls a *subroutine*: the
+same instance, the same context, the same mailbox, the same children —
+only the definition answering events changes.
+
+So the instance holds `sbbStack: SbbFrame[]`, and three lookups read the
+top of it instead of the root definition: `currentStates()`,
+`currentSuccessor()` (so `next()` walks the block's declaration order,
+not the host's) and `currentFx()`. Everything else in the engine is
+untouched, which is the point of choosing this shape: the pending queue
+of §4.5 keeps working unchanged, because there is still exactly one
+queue.
+
+On the BEAM the same model costs a nested `receive` and a thrown term to
+unwind; here the stack is data and unwinding it is a `while` loop.
+
+### 12.2 The context is the host's; the sandbox is the block's
+
+The block works on the host's context object — not a copy, not a subset.
+That is what lets a block do anything useful with what its host already
+holds, and it is the rule the Elixir dialect settled on for the same
+reason.
+
+Sharing the context and sharing a scratch space are different questions,
+and the second answer is no: a block writing `attempts` would silently
+clobber a host that uses the same key. So each entry gets a **private
+sandbox**, `fx.data`, made fresh by the block's own `data()` factory and
+seeded by the `args` of the call site. Fresh on every entry, so a hunt
+calling the same block on target after target does not inherit the
+previous attempt's scratch.
+
+What a block wants to hand back it puts in the event it returns.
+
+TypeScript then gives for free what Elixir has to check by hand. `Sbb`
+carries a phantom per type parameter, `__requires` in contravariant
+position, so:
+
+- a host whose context does not provide what the block declares it
+  requires **does not compile**;
+- a block whose returns are not part of the host's event union **does not
+  compile** — the "host has no clause for this outcome" silence that
+  `__sbb_returns__` exists to prevent on the Elixir side is a type error
+  here.
+
+A phantom that appears nowhere in the structure is invisible to
+assignability, which is why all five are declared: without them the
+compiler would infer and check nothing.
+
+### 12.3 Entering, returning, unwinding
+
+`enterSbb` suspends the host's `after`, opens a timer scope, builds the
+frame with its own `fx`, arms the block's deadline and enters its
+`initial_state`. `sbbReturn` does the reverse and resumes the host as a
+`stay()`: its `enter` does not re-run.
+
+Three details are load-bearing:
+
+- **the returned event is not privileged.** `replayPending()` runs
+  against the host state *before* the return event is posted, so whatever
+  the block ignored is matched first, in arrival order (spec §8.4). A
+  `{ms_event, …}` reaching the host before `{call:connected}` is the rule
+  working, not a bug;
+- **only the top frame may return.** An `fx` captured in a closure and
+  used after its block returned would otherwise pop somebody else's
+  frame. It is refused with a warning;
+- **a terminal unwinds everything, host included** — `success()` is not
+  the way back, `sbbReturn` is. Each block's `cleanup` runs on the way
+  out, innermost first, so unwinding leaks nothing the block reserved.
+  The same unwinding serves a cooperative shutdown and an outer block's
+  expired deadline.
+
+`MAX_SBB_DEPTH` (16) stops a block that enters itself with a failure that
+names it, rather than with a JS stack overflow that names nothing.
+
+### 12.4 Deadlines, and what `fx.sbb` may not be followed by
+
+The host's `after` is cancelled on entry and armed **afresh** on return.
+Afresh rather than resumed: the timer here is relative, so there is
+nothing to resume, and a host that gets its full deadline back is the
+behaviour a state body would have had in Elixir, where `on_events`
+computes a new deadline after the block returns.
+
+That uniformity is why `fx.sbb` is allowed from an `enter`, from a
+handler and from an `after.then` alike — the Elixir dialect forbids the
+middle one because its deadline is absolute, a constraint this dialect
+does not have.
+
+`fx.delay` handles are **not** cancelled on entry: the host never left
+its state, so their "cancelled on state exit" has not happened. The
+`TimerBag` therefore scopes delays by stack depth — a block's delays die
+with it, the host's survive it. Sticky delays outlive both, as they
+outlive a state.
+
+A callback that moved the stack owns nothing after that, so a transition
+returned from it is **ignored with a warning** naming which of `fx.sbb`
+and `fx.sbbReturn` moved it: applied as written it would resolve a state
+name against the wrong definition, in either direction. Both are the last
+thing a state body does.
+
+The one thing that must survive that refusal is a **string shorthand's
+re-dispatch**. `on: { dial: "placing" }` landing in a `placing` whose
+`enter` enters a block still owes the block that event, so it is sent
+round the mailbox instead of being dropped — the alternative is an event
+that vanishes for no reason a reader could see.
+
+### 12.5 What is published
+
+`instance.state` stays the **host's** state while a block runs, and so
+does `snapshot.meta`. A block is a subroutine call, not a state the
+machine declared; publishing its states as `state` would make the machine
+look like it jumped somewhere it cannot go, and would break `matches()`
+for every caller.
+
+Where the machine actually is inside a block is published beside it, as
+`snapshot.sbb` / `instance.sbb` — block name, state, depth and the block
+state's own `meta`. The innermost block, because that is where the
+machine is; the chain of enclosing ones is not worth a field.
+
+The transition log is the other half, and there qualification is the
+right answer: `Establish/ringing` rather than a `ringing` no host
+declared. Same choice as the Elixir monitor, for the same reason — making
+the sequence visible is the layer's purpose.
+
+### 12.6 Shutdown
+
+A cooperative shutdown reaching a block unwinds it — running each block's
+`cleanup` — and then runs the **host's** `onShutdown`. Ending from inside
+the block instead would skip the hook where the host frees what the run
+reserved, and leak it.
+
+### 12.7 The diagram subpath
+
+`defineSbb` definitions are extracted like machines, tagged
+`kind: "block"`. Inside a block, `fx.sbbReturn({type})` draws an edge to
+`[*]` labelled by the event: leaving a block is leaving the diagram it is
+drawn in. A block-level `timeout` is a trigger of every one of its
+states.
+
+In a host, `fx.sbb(Block)` is recorded per state in `graph.blocks` and
+rendered as a state description. It is the one thing `renderMermaid`
+prints that `forwarded` and `consumed` do not get, and it earns it: a
+state that enters a block has no outgoing edge until it returns, so
+leaving it out draws a dead end exactly where the sequence is.

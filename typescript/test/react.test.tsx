@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   defineMachine,
+  defineSbb,
   goto,
   stay,
   type Instance,
@@ -165,5 +166,93 @@ describe("§7.1 useMachine", () => {
     expect(counters.cleanups).toBe(0);
     inst.send({ type: "tick" });
     expect(inst.context.count).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Service Building Blocks (spec §8.4) through the hook.
+// ---------------------------------------------------------------------------
+
+type BlockEv = { type: "open" } | { type: "pick"; key: string } | MenuDone;
+type MenuDone = { type: "menu:choice"; key: string };
+
+const Menu = defineSbb<
+  { picked?: string },
+  BlockEv,
+  { prompt: string },
+  MenuDone
+>()({
+  name: "Menu",
+  data: () => ({ prompt: "main" }),
+  states: {
+    initial_state: {
+      meta: { badge: "prompting" },
+      on: { pick: (ev) => goto("confirming", ev.key) },
+    },
+    confirming: {
+      meta: { badge: "confirming" },
+      on: {
+        pick: (ev, ctx, fx) => {
+          ctx.picked = ev.key;
+          fx.sbbReturn({ type: "menu:choice", key: ev.key });
+        },
+      },
+    },
+  },
+});
+
+const WithBlock = defineMachine<{ picked?: string }, BlockEv>()({
+  name: "WithBlock",
+  context: () => ({}),
+  states: {
+    initial_state: {
+      meta: { badge: "idle" },
+      on: {
+        open: (_ev, _ctx, fx) => {
+          fx.sbb(Menu);
+        },
+        "menu:choice": () => goto("done"),
+      },
+    },
+    done: { meta: { badge: "done" } },
+  },
+});
+
+function BlockProbe() {
+  const { state, meta, sbb, send } = useMachine(WithBlock);
+  return (
+    <div>
+      <span data-testid="state">{state}</span>
+      <span data-testid="badge">{String(meta?.badge)}</span>
+      <span data-testid="block">{sbb ? `${sbb.block}/${sbb.state}` : "-"}</span>
+      <span data-testid="block-badge">{String(sbb?.meta?.badge)}</span>
+      <button data-testid="open" onClick={() => send({ type: "open" })} />
+      <button
+        data-testid="pick"
+        onClick={() => send({ type: "pick", key: "1" })}
+      />
+    </div>
+  );
+}
+
+describe("§8.4 useMachine and blocks", () => {
+  it("keeps rendering the host state and follows the block beside it", () => {
+    const { getByTestId } = render(<BlockProbe />);
+    expect(getByTestId("block").textContent).toBe("-");
+
+    fireEvent.click(getByTestId("open"));
+    // The host has not moved: a block is a subroutine call.
+    expect(getByTestId("state").textContent).toBe("initial_state");
+    expect(getByTestId("badge").textContent).toBe("idle");
+    // …and the view can follow the sequence inside it.
+    expect(getByTestId("block").textContent).toBe("Menu/initial_state");
+    expect(getByTestId("block-badge").textContent).toBe("prompting");
+
+    fireEvent.click(getByTestId("pick"));
+    expect(getByTestId("block").textContent).toBe("Menu/confirming");
+
+    fireEvent.click(getByTestId("pick"));
+    expect(getByTestId("state").textContent).toBe("done");
+    expect(getByTestId("block").textContent).toBe("-");
   });
 });

@@ -233,3 +233,88 @@ describe("§6.1 diagram — several machines per file", () => {
     expect(machineGraphs("export const x = 1;")).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Service Building Blocks (spec §8.4)
+// ---------------------------------------------------------------------------
+
+const WITH_BLOCK = `
+import { defineMachine, defineSbb, goto, failure, stay } from "finite-state-language";
+
+const Establish = defineSbb<Ctx, Ev, Data, Ret>()({
+  name: "Establish",
+  data: () => ({ tries: 0 }),
+  timeout: { delay: 30_000, then: (_c, fx) => fx.sbbReturn({ type: "call:timeout" }) },
+  states: {
+    initial_state: {
+      enter: () => goto("ringing"),
+    },
+    ringing: {
+      on: {
+        "sip:180": () => stay("still ringing"),
+        "sip:200": (ev, _c, fx) => fx.sbbReturn({ type: "call:connected", uri: ev.uri }),
+        "ui:hangup": () => aborted("caller gave up"),
+      },
+    },
+  },
+});
+
+const Host = defineMachine<Ctx, Ev>()({
+  name: "Host",
+  context: () => ({}),
+  states: {
+    initial_state: { on: { "ui:dial": () => goto("placing") } },
+    placing: {
+      enter: (ctx, fx) => { fx.sbb(Establish, { args: { dest: ctx.uri } }); },
+      on: {
+        "call:connected": () => goto("talking"),
+        "call:timeout": () => failure("no answer"),
+      },
+    },
+    talking: {},
+  },
+});
+`;
+
+describe("§8.4 diagram — service building blocks", () => {
+  const graphs = machineGraphs(WITH_BLOCK);
+  const block = graphs.find((g) => g.name === "Establish") as MachineGraph;
+  const host = graphs.find((g) => g.name === "Host") as MachineGraph;
+
+  it("extracts a block alongside the machine, and tells the two apart", () => {
+    expect(graphs.map((g) => [g.name, g.kind])).toEqual([
+      ["Establish", "block"],
+      ["Host", "machine"],
+    ]);
+  });
+
+  it("records which states enter which block", () => {
+    expect(host.blocks).toEqual([{ state: "placing", events: ["Establish"] }]);
+    // …and does not also call that enter a consumed event
+    expect(host.consumed).toEqual([]);
+  });
+
+  it("draws sbbReturn as the way out of the block, labelled by the event", () => {
+    const out = block.edges.find(
+      (e) => e.from === "ringing" && e.to === "[*]",
+    ) as Edge;
+    // Leaving a block is leaving its diagram, whether by a return or by
+    // a terminal; the label says which, and by which event.
+    expect(out.labels).toContain("sip:200 (call:connected)");
+    expect(out.labels).toContain("ui:hangup (aborted)");
+  });
+
+  it("applies the block's own deadline to each of its states", () => {
+    const timeouts = block.edges.filter((e) =>
+      e.labels.some((l) => l.startsWith("after 30 s")),
+    );
+    expect(timeouts.map((e) => e.from).sort()).toEqual([
+      "initial_state",
+      "ringing",
+    ]);
+  });
+
+  it("names the block on the state that enters it", () => {
+    expect(renderMermaid(host)).toContain("placing : sbb Establish");
+  });
+});

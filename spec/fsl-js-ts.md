@@ -1,7 +1,7 @@
 # FSL for TypeScript / JavaScript — Language Specification
 
 Status: draft v0.2 — 2026-08-15 (post first review)
-Lineage: [Elixip DSL](https://github.com/neutrino38/elixip/blob/master/DSL.md)
+Lineage: [Elixip FSL](https://github.com/neutrino38/elixip/blob/master/FSL.md)
 
 FSL (Finite State Language) is a small, readable language for describing
 finite state machines, embedded in TypeScript. It is the TypeScript sibling
@@ -246,7 +246,7 @@ function Phone() {
 | `sip_ctx` + `appdata_*`     | typed `ctx` (whole context is user-defined)   |
 | process mailbox             | machine event queue (see §6.3)                |
 | `spawn_fsm / notify`        | `fx.spawn / fx.notify / fx.notifyParent`      |
-| `sbb_fsm / sbb_return`      | `fx.sbb / fx.sbbReturn` (reserved, §8.4)      |
+| `sbb_fsm / sbb_return`      | `fx.sbb / fx.sbbReturn` (§8.4)                |
 | `on_shutdown`               | `onShutdown` hook                             |
 | `cleanup/1`                 | `cleanup(ctx)` hook                           |
 | `Valet.ask/4`               | `fx.task(work, tag, {timeout})`               |
@@ -618,14 +618,14 @@ shuts down children, then calls `cleanup(ctx)` if defined — the place to
 `ua.stop()`, close PeerConnections, release media. Only then does
 `done` settle and do subscribers get the final notification.
 
-### 8.4 Service Building Blocks — reserved, not implemented
+### 8.4 Service Building Blocks
 
-**Status: names reserved, contract fixed, no code.** Recorded here for the same
-reason as the Node supervision of §9: the design exists, it is being built on
-the Elixir side first, and the one thing that must not happen twice is the
-naming. See
-[`elixip/docs/design/service-building-block.md`](https://github.com/neutrino38/elixip/blob/master/docs/design/service-building-block.md),
-whose §4.6 holds the shared vocabulary table for both dialects.
+**Status: implemented in 0.1.3.** The names were reserved here before either
+dialect had code, for the reason the Node supervision of §9 is recorded: the one
+thing that must not happen twice is the naming. Elixir shipped the layer in its
+1.5.0. See
+[`elixip/docs/design/DESIGN-SBB.md`](https://github.com/neutrino38/elixip/blob/master/docs/design/DESIGN-SBB.md),
+whose §10 holds the shared vocabulary table for both dialects.
 
 A **Service Building Block** is a reusable fragment of a state machine behind a
 callable face: a sequence written once — establish a call, run a menu, collect
@@ -663,9 +663,9 @@ on: {
   the **pending queue exactly as today** (§4.2) — nothing about §4.2 changes,
   which is the point of choosing this shape;
 - **`fx.sbbReturn(ev)`** pops the stack and sends `ev`, handing control back to
-  the host state as a `stay()`: the host's `enter` does not re-run and its
-  `after` is not re-armed. The final event is **not** privileged — anything the
-  SBB left pending is replayed first, in arrival order;
+  the host state as a `stay()`: the host's `enter` does not re-run. The final
+  event is **not** privileged — anything the SBB left pending is replayed first,
+  in arrival order;
 - **returning is mandatory.** An SBB branch ends on `fx.sbbReturn` or on a
   terminal;
 - **terminals propagate.** `failure(...)` / `aborted(...)` inside an SBB keep
@@ -676,9 +676,47 @@ on: {
   normal outcome, so reusing it for the return would have turned a clean ending
   into a host kill on the first try.)
 - **the host's `after` is suspended** while an SBB runs; the SBB carries its own
-  deadline. Two concurrent deadlines have no arbiter;
+  deadline, declared as a block-level `timeout`. Two concurrent deadlines have
+  no arbiter;
 - **SBBs compose** — a plain call stack — but two of them cannot run
   *concurrently*: they nest, or they follow each other.
+
+Implementing it settled five things the contract above left open. They are part
+of the contract now.
+
+- **the context is shared, the scratch space is not.** A block works on the
+  host's context object, which is what lets it do anything with the state its
+  host holds — the rule Elixir settled on for the same reason. Sharing a
+  *scratch space* is a different question and the answer is no: a block writing
+  a key its host also uses would clobber it silently. Each entry gets a private
+  sandbox, `fx.data`, from the block's own `data()` factory, seeded by the call
+  site's `args` and **fresh on every entry** — a hunt calling one block on
+  target after target must not inherit the previous attempt's scratch. What a
+  block wants to hand back goes in the event it returns;
+- **two compile-time checks, which is this dialect's whole advantage here.** A
+  host whose context does not provide what the block declares it requires does
+  not compile; neither does a host with no clause for what the block can return.
+  That second one is the failure the layer exists to prevent — an unmatched
+  outcome leaves the host waiting on a deadline for an event nobody will send,
+  a silence with nothing in the log. Elixir checks it with `__sbb_returns__` and
+  a compile-time refusal; here it is the ordinary assignability of the block's
+  return type to the host's event union;
+- **the host's deadline is armed afresh on return, not resumed.** The timer is
+  relative, so there is nothing to resume, and a full deadline is what an
+  Elixir state body gets, since its `on_events` computes a new one after the
+  block returns. This is why `fx.sbb` is allowed from an `enter`, a handler and
+  an `after.then` alike — Elixir forbids the middle one because its deadline is
+  absolute, a constraint this dialect does not have;
+- **`fx.sbb` is the last thing a state body does.** A callback that entered a
+  block owns nothing after that: the block is running, and a transition returned
+  from such a callback would resolve a host state name against the block's
+  states. It is ignored, with a warning;
+- **`state` stays the host's while a block runs**, and so does `meta`. A
+  subroutine call is not a state the machine declared, and publishing the
+  block's states as `state` would break `matches()` for every caller. Where the
+  machine actually is is published beside it, as `snapshot.sbb` — block, state,
+  depth, and the block state's own `meta`. The transition log takes the other
+  option and qualifies, `Establish/ringing`, the way the Elixir monitor does.
 
 In JavaScript this is cheaper than on the BEAM, where the sub-machine is a
 nested `receive` and a propagating terminal has to be thrown: here the stack is
@@ -738,7 +776,7 @@ service is browser-side only: the media machine inside a `phx` hook
 | Error channel | `lasterr` checked by `goto` | exceptions ⇒ `failure` | idiomatic TS |
 | Pattern matching | full Elixir patterns | `event.type` dispatch + plain TS in the handler | keep the DSL small |
 | SIP helpers | `SIP.Session.*` macros | out of scope: bindings live app-side | stack-agnostic requirement |
-| Sub-machines | `spawn_fsm` (actor) and `sbb_fsm` (subroutine) | `fx.spawn`; `fx.sbb` reserved (§8.4) | same two concepts, same two names |
+| Sub-machines | `spawn_fsm` (actor) and `sbb_fsm` (subroutine) | `fx.spawn` and `fx.sbb` (§8.4) | same two concepts, same two names |
 | Inter-machine events | `{:parent_msg, …}` / `{:child_msg, …}` / `{:child_exit, …}` | `parent:msg` / `child:msg` / `child:exit` | converged: Elixir moved off `{:scenario_msg, from, …}` in 1.5.0, since TS dispatches on the type alone and cannot fold two directions into one |
 
 ---
@@ -756,9 +794,9 @@ Settled (review of 2026-08-15):
    equivalent of Elixir's `_` catch-all, and that is judged sufficient;
    no `"sip:*"` family matching in v1.
 4. **No `goto back` / history helper in v1.** Deferred until a concrete
-   screen needs it. Both `stay()` and `goto back` are proposed as
-   improvements to FSL Elixir instead (see
-   `elixip/docs/design/improve-fsl-elixir.md`).
+   screen needs it. Both `stay()` and `goto back` were adopted by FSL
+   Elixir instead, and shipped there in 1.5.0 (see `elixip/FSL.md`,
+   sections *goto back* and *stay*).
 5. **One concept, one name across the two dialects** (review of 2026-08-18).
    A concept present in both FSL/TS and FSL Elixir is spelled the same in
    both, modulo `camelCase` vs `snake_case` and the `fx.` namespace. Where the
@@ -766,9 +804,9 @@ Settled (review of 2026-08-15):
    this package is 0.x. First applications: Elixir renamed `sub_fsm` to
    `spawn_fsm` and moved off `{:scenario_msg, from, …}` to
    `{:parent_msg, …}` / `{:child_msg, …}` / `{:child_exit, …}` in its 1.5.0;
-   `fx.sbb` / `fx.sbbReturn` are reserved here before either side implements
-   them (§8.4). The shared table lives in
-   `elixip/docs/design/service-building-block.md` §4.6 — changing a name in
+   `fx.sbb` / `fx.sbbReturn` were reserved here before either side had code,
+   and both dialects now implement them (§8.4). The shared table lives in
+   `elixip/docs/design/DESIGN-SBB.md` §10 — changing a name in
    one repository means changing it in the other in the same breath.
 
 Still open:

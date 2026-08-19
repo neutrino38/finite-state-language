@@ -7,6 +7,7 @@ import { describe, expectTypeOf, it } from "vitest";
 import {
   aborted,
   defineMachine,
+  defineSbb,
   failure,
   goto,
   loop,
@@ -14,7 +15,9 @@ import {
   stay,
   success,
   type DoneResult,
+  type Fx,
   type Instance,
+  type SbbView,
   type Snapshot,
   type TerminalStateName,
   type Transition,
@@ -248,5 +251,130 @@ describe("§6 instance surface typing", () => {
     expectTypeOf(snap.context.attempts).toEqualTypeOf<number>();
     expectTypeOf(snap.pending).toEqualTypeOf<readonly Ev[]>();
     expectTypeOf(m.done).toEqualTypeOf<Promise<DoneResult>>();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Service Building Blocks (spec §8.4): the two checks a block gets for
+// free in TypeScript, and that the Elixir dialect has to enforce by hand.
+// ---------------------------------------------------------------------------
+
+describe("§8.4 fx.sbb type checking", () => {
+  interface Needs {
+    callee?: string;
+  }
+  type BlockEv = { type: "sip:accepted" } | Answered;
+  type Answered = { type: "call:answered"; who: string };
+
+  const Block = defineSbb<Needs, BlockEv, { tries: number }, Answered>()({
+    name: "Block",
+    data: () => ({ tries: 0 }),
+    states: {
+      initial_state: {
+        enter(ctx, fx) {
+          // the host's context, shared — and the block's own sandbox
+          expectTypeOf(ctx.callee).toEqualTypeOf<string | undefined>();
+          expectTypeOf(fx.data.tries).toEqualTypeOf<number>();
+        },
+        on: {
+          "sip:accepted": (_ev, ctx, fx) =>
+            fx.sbbReturn({ type: "call:answered", who: ctx.callee ?? "" }),
+        },
+      },
+    },
+  });
+
+  it("accepts a host that provides what the block requires", () => {
+    defineMachine<Ctx, Ev | Answered>()({
+      name: "GoodHost",
+      context: () => ({ attempts: 0 }),
+      states: {
+        initial_state: {
+          enter: (_c, fx) => fx.sbb(Block, { args: { tries: 1 } }),
+          on: { "call:answered": (ev) => goto("ready", ev.who) },
+        },
+        ready: {},
+      },
+    });
+  });
+
+  it("rejects a host whose context lacks what the block requires", () => {
+    defineMachine<{ attempts: number }, Ev | Answered>()({
+      name: "NoCallee",
+      context: () => ({ attempts: 0 }),
+      states: {
+        initial_state: {
+          // @ts-expect-error — this context has no `callee`
+          enter: (_c, fx) => fx.sbb(Block),
+          on: { "call:answered": () => stay() },
+        },
+      },
+    });
+  });
+
+  it("rejects a host that cannot match what the block returns", () => {
+    defineMachine<Ctx, Ev>()({
+      name: "DeafHost",
+      context: () => ({ attempts: 0 }),
+      states: {
+        initial_state: {
+          // @ts-expect-error — "call:answered" is not in this host's Ev
+          enter: (_c, fx) => fx.sbb(Block),
+        },
+      },
+    });
+  });
+
+  it("rejects an undeclared outcome and an unknown sandbox key", () => {
+    defineSbb<Needs, BlockEv, { tries: number }, Answered>()({
+      name: "Wrong",
+      data: () => ({ tries: 0 }),
+      states: {
+        initial_state: {
+          on: {
+            "sip:accepted": (_ev, _ctx, fx) => {
+              // @ts-expect-error — not one of the block's declared returns
+              fx.sbbReturn({ type: "call:rejected" });
+              // @ts-expect-error — not part of this block's sandbox
+              void fx.data.attempts;
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("types the block view on the instance and the snapshot", () => {
+    const m = M.start();
+    expectTypeOf(m.sbb).toEqualTypeOf<SbbView | undefined>();
+    expectTypeOf(m.getSnapshot().sbb).toEqualTypeOf<SbbView | undefined>();
+  });
+});
+
+describe("Fx keeps its old shape for existing consumers", () => {
+  // The pattern every current consumer uses: a module-level helper
+  // annotated `Fx<Ev>`, with no context parameter. Adding Ctx to Fx must
+  // not break it — the parameter is defaulted, and `sbb` is the only
+  // member that reads it.
+  function forward(ev: Ev, _ctx: Ctx, fx: Fx<Ev>): void {
+    fx.send(ev);
+    fx.notifyParent(ev);
+  }
+
+  it("accepts the fx a handler is given", () => {
+    defineMachine<Ctx, Ev>()({
+      name: "Legacy",
+      context: () => ({ attempts: 0 }),
+      states: {
+        initial_state: {
+          on: {
+            "sip:accepted": (ev, ctx, fx) => {
+              forward(ev, ctx, fx);
+              return stay();
+            },
+          },
+        },
+      },
+    });
   });
 });

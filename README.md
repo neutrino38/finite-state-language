@@ -32,7 +32,7 @@ FSL is the TypeScript sibling of the DSL at the heart of
 [**Elixip**](https://github.com/neutrino38/elixip), an Elixir SIP framework
 where call scenarios are written as explicit state machines — declared
 states, declared transitions, events collected per state, readability above
-all ([the Elixip DSL](https://github.com/neutrino38/elixip/blob/master/DSL.md)).
+all ([the Elixip FSL](https://github.com/neutrino38/elixip/blob/master/FSL.md)).
 That style has proven itself describing real SIP call flows on the backend;
 FSL brings the same discipline to the browser, adapted to how UIs actually
 work.
@@ -139,8 +139,10 @@ service, the pun has done its job.
 - [x] Timers, tasks (the Valet pattern) & HTTP-as-events
 - [x] Sub-machines & cooperative shutdown
 - [x] React adapter
+- [x] Diagrams from the source (`finite-state-language/diagram`)
+- [x] Service building blocks (`fx.sbb` / `fx.sbbReturn`)
 - [ ] JsSIP web phone — full example, as its own project
-- [x] `finite-state-language@0.1.1` on npm
+- [x] `finite-state-language@0.1.3` on npm
 
 ## Get involved
 

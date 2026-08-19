@@ -108,6 +108,66 @@ const define = /** @type {typeof defineMachine<Ctx, Ev>} */ (defineMachine);
 const M = define()({/* state names, events and context are all checked */});
 ```
 
+## Service building blocks
+
+A sequence you write once and call from anywhere — establish a call, run
+a menu, collect credentials — is a **block**: a fragment of a state
+machine behind a callable face.
+
+`fx.spawn` starts a second machine, with state of its own. `fx.sbb` calls
+a subroutine: same machine, same context, same mailbox, suspended at the
+call site until the block returns.
+
+```ts
+type Chosen = { type: "menu:choice"; key: string };
+
+const Menu = defineSbb<{ lang: string }, MenuEv, { tries: number }, Chosen>()({
+  name: "Menu",
+  // the block's own scratch space, fresh on every call
+  data: () => ({ tries: 0 }),
+  // its own deadline: the host's is suspended while it runs
+  timeout: { delay: 30_000, then: (_c, fx) => fx.sbbReturn({ type: "menu:choice", key: "" }) },
+  states: {
+    initial_state: {
+      enter: (ctx, fx) => play(prompt(ctx.lang, fx.data.tries)),
+      on: {
+        "dtmf:key": (ev, _ctx, fx) => fx.sbbReturn({ type: "menu:choice", key: ev.key }),
+      },
+    },
+  },
+});
+
+// …and in the host, one line and a couple of clauses:
+placing: {
+  enter: (_ctx, fx) => { fx.sbb(Menu, { args: { tries: 1 } }); },
+  on: { "menu:choice": (ev) => goto("routing", ev.key) },
+},
+```
+
+Two things the compiler checks, and they are the ones worth checking: a
+host whose context does not provide what the block declares it requires
+will not compile, and neither will a host that has no clause for what the
+block can return — the "waiting for an event nobody will send" silence,
+turned into a type error.
+
+While a block runs, `state` stays the **host's** state — a subroutine
+call is not a state your machine declared — and `snapshot.sbb` says which
+block is running and where inside it, ready to render:
+
+```tsx
+const { state, sbb } = useMachine(Phone);
+return (
+  <p>
+    {state}
+    {sbb && ` — ${sbb.block}: ${sbb.state}`}
+  </p>
+);
+```
+
+`fx.sbbReturn` is the only way back. `failure()` and `aborted()` keep
+their ordinary meaning inside a block and end the whole machine, host
+included, running each block's `cleanup` on the way out.
+
 ## Diagrams
 
 Two exports draw a machine, and they see different things.
@@ -134,6 +194,9 @@ writeFileSync("docs/phone.mmd", renderMermaid(phone));
 A graph also carries `states`, `edges`, and two lists worth printing
 beside the picture: `forwarded` (events handed to a child machine with
 `fx.notify`) and `consumed` (events a state handles without moving).
+Blocks are extracted too, tagged `kind: "block"`, with `fx.sbbReturn`
+drawn as the way out; in a host, `graph.blocks` says which state enters
+which block, and the diagram names it on the box.
 
 The extraction over-approximates on purpose: guards are ignored, so a
 handler that can reach two targets draws two edges. Only string-literal

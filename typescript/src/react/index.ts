@@ -26,6 +26,7 @@ import type {
   AnyEvent,
   Instance,
   Machine,
+  SbbView,
   Snapshot,
   StartOpts,
   TerminalStateName,
@@ -40,6 +41,13 @@ export interface UseMachineResult<
   context: Ctx;
   /** The current state's meta block (spec §7.3). */
   meta: Record<string, unknown> | undefined;
+  /**
+   * Set while a Service Building Block runs (spec §8.4): which block,
+   * and where inside it. `state` stays the host's throughout — a block
+   * is a subroutine call, not a state the machine declared — so this is
+   * what a view renders to follow a sequence as it unfolds.
+   */
+  sbb: SbbView | undefined;
   send: (ev: Ev) => void;
   /** The underlying instance: done, log, pending, shutdown… */
   instance: Instance<Ctx, Ev, SN>;
@@ -106,6 +114,7 @@ export function useMachine<
     state: snap.state,
     context: snap.context,
     meta: snap.meta,
+    sbb: snap.sbb,
     send,
     instance: inst,
   };

@@ -5,6 +5,71 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/)
 (everything below 0.2 is `@experimental` — the API is still soft).
 
+## [0.1.3] — 2026-08-19
+
+Service Building Blocks, reserved in the spec since §8.4 was written and
+now implemented. Additive: nothing existing changes behaviour, and the
+pending queue of §4.2 is untouched — which was the point of choosing a
+stack of definitions over anything cleverer.
+
+### Added
+
+- **`defineSbb` and `fx.sbb` / `fx.sbbReturn` — a subroutine call, not a
+  second machine.** A block is a reusable fragment of a state machine
+  behind a callable face: a sequence written once — establish a call, run
+  a menu, collect credentials — that a host enters and observes through a
+  handful of service-level events.
+
+  `fx.spawn` starts a machine with state of its own; `fx.sbb` calls a
+  block that works on the state its host already holds. Same instance,
+  same context, same mailbox, same children — only the definition
+  answering events changes. The host is suspended at the call site: its
+  `enter` does not re-run on return, and its `after` is suspended for the
+  duration and armed afresh afterwards.
+
+  Two things the compiler now checks that no runtime can: a host whose
+  context does not provide what a block declares it requires does not
+  compile, and neither does a host with no clause for what the block can
+  return. That second one is the failure the layer exists to prevent — an
+  outcome nobody matches leaves the host waiting on a deadline for an
+  event that never comes, a silence with nothing in the log.
+
+  A block gets a private sandbox (`fx.data`, seeded by `args`, fresh on
+  every entry) rather than a share of the host's keys, and its own
+  `timeout`. `fx.sbbReturn` is the only way back: `failure()` and
+  `aborted()` keep their ordinary meaning and end the whole machine, host
+  included, running each block's `cleanup` on the way out.
+
+- **`snapshot.sbb` / `instance.sbb`, and `sbb` from `useMachine`.** While
+  a block runs, `state` stays the host's — a subroutine call is not a
+  state the machine declared, and `matches()` must keep working — and the
+  block's position is published beside it: name, state, depth, and the
+  block state's `meta`. The transition log takes the other option and
+  qualifies: `Establish/ringing`, never a bare `ringing` no host declared.
+
+- **`finite-state-language/diagram` reads blocks.** `defineSbb`
+  definitions are extracted like machines and tagged `kind: "block"`,
+  with `fx.sbbReturn` drawn as the edge to `[*]` and a block-level
+  `timeout` applied to every state. In a host, `graph.blocks` records
+  which state enters which block, and `renderMermaid` names it on the
+  box — a state that enters a block has no outgoing edge until it
+  returns, so leaving it out drew a dead end exactly where the sequence
+  was.
+
+### Fixed
+
+- **`VERSION` had said `0.1.1` since the 0.1.2 release.** The constant
+  and the manifest were two literals with nothing tying them together,
+  and the test that should have caught it was pinning the constant to the
+  same stale value. It now reads `package.json`.
+
+### Internal
+
+- `fx.delay` handles are scoped by SBB depth. A delay armed by the host
+  before it called a block survives the block's state hops — the host
+  never left its state, so its "cancelled on state exit" has not
+  happened — while the block's own delays die with it.
+
 ## [0.1.2] — 2026-08-17
 
 Additive release: a new subpath export, no change to the core runtime or

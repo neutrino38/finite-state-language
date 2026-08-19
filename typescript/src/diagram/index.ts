@@ -39,6 +39,12 @@ export interface StateEvents {
 export interface MachineGraph {
   /** The machine's `name`, as declared in its definition. */
   name: string;
+  /**
+   * Whether this came from `defineMachine` or `defineSbb`. A block is
+   * drawn like a machine, and its `[*]` edges are its `fx.sbbReturn`
+   * calls rather than its terminals (spec §8.4).
+   */
+  kind: "machine" | "block";
   /** Every state, in declaration order — the order that gives `next()` its meaning. */
   states: string[];
   edges: Edge[];
@@ -51,6 +57,13 @@ export interface MachineGraph {
   forwarded: StateEvents[];
   /** Events this state handles with no transition and no forwarding. */
   consumed: StateEvents[];
+  /**
+   * Blocks each state enters with `fx.sbb`, in call order. A state whose
+   * `enter` is one `fx.sbb` has no outgoing edge of its own — it waits
+   * for the block — so without this the graph would show it as a dead
+   * end and lose the whole sequence hanging off it.
+   */
+  blocks: StateEvents[];
 }
 
 /** What a handler can reach. `desc` is the transition description, when it is a literal. */
@@ -58,11 +71,14 @@ type Outcome =
   | { kind: "goto"; to: string; desc?: string }
   | { kind: "self"; desc?: string }
   | { kind: "next"; desc?: string }
-  | { kind: "final"; outcome: "success" | "failure" | "aborted" };
+  | { kind: "final"; outcome: "success" | "failure" | "aborted" }
+  | { kind: "return"; event?: string };
 
 interface Reachable {
   outcomes: Outcome[];
   forwards: boolean;
+  /** Blocks entered with `fx.sbb`, in call order. */
+  blocks: string[];
 }
 
 /** A state's outgoing triggers, in declaration order. */
@@ -105,6 +121,7 @@ function collect(
   seen: Set<string>,
 ): Reachable {
   const outcomes: Outcome[] = [];
+  const blocks: string[] = [];
   let forwards = false;
 
   const descend = (name: string): void => {
@@ -113,6 +130,7 @@ function collect(
     seen.add(name);
     const inner = collect(fn.body, helpers, seen);
     outcomes.push(...inner.outcomes);
+    blocks.push(...inner.blocks);
     forwards = forwards || inner.forwards;
   };
 
@@ -123,7 +141,21 @@ function collect(
       ts.isCallExpression(n) &&
       ts.isPropertyAccessExpression(n.expression)
     ) {
-      if (n.expression.name.text === "notify") forwards = true;
+      const effect = n.expression.name.text;
+      const [arg] = n.arguments;
+      if (effect === "notify") {
+        forwards = true;
+      } else if (
+        effect === "sbb" &&
+        arg !== undefined &&
+        ts.isIdentifier(arg)
+      ) {
+        // `fx.sbb(Establish)` — the block is named by an identifier, the
+        // one thing about a subroutine call the source always states.
+        if (!blocks.includes(arg.text)) blocks.push(arg.text);
+      } else if (effect === "sbbReturn") {
+        outcomes.push({ kind: "return", event: eventType(arg) });
+      }
     } else if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
       const [first, second] = n.arguments;
       switch (n.expression.text) {
@@ -151,7 +183,16 @@ function collect(
   };
 
   visit(node);
-  return { outcomes, forwards };
+  return { outcomes, forwards, blocks };
+}
+
+/** `fx.sbbReturn({ type: "call:connected", … })` → `"call:connected"`. */
+function eventType(arg: ts.Expression | undefined): string | undefined {
+  if (arg === undefined || !ts.isObjectLiteralExpression(arg)) return undefined;
+  const typeProp = property(arg, "type");
+  return typeProp !== undefined && ts.isPropertyAssignment(typeProp)
+    ? literal(typeProp.initializer)
+    : undefined;
 }
 
 /** `90_000` → `after 90 s`, `3500` → `after 3500 ms`. */
@@ -223,21 +264,36 @@ function triggersOf(state: ts.ObjectLiteralExpression): Trigger[] {
   return triggers;
 }
 
-/** Every `defineMachine<…>()({…})` argument in the file, in source order. */
-function definitions(source: ts.SourceFile): ts.ObjectLiteralExpression[] {
-  const found: ts.ObjectLiteralExpression[] = [];
+interface Definition {
+  def: ts.ObjectLiteralExpression;
+  kind: "machine" | "block";
+}
+
+/**
+ * Every `defineMachine<…>()({…})` and `defineSbb<…>()({…})` argument in
+ * the file, in source order. A file usually holds a machine and the
+ * blocks it calls, and both belong in the diagram.
+ */
+function definitions(source: ts.SourceFile): Definition[] {
+  const found: Definition[] = [];
 
   const visit = (n: ts.Node): void => {
     if (
       ts.isCallExpression(n) &&
       ts.isCallExpression(n.expression) &&
       ts.isIdentifier(n.expression.expression) &&
-      n.expression.expression.text === "defineMachine" &&
+      (n.expression.expression.text === "defineMachine" ||
+        n.expression.expression.text === "defineSbb") &&
       n.arguments.length === 1
     ) {
       const [def] = n.arguments;
-      if (def !== undefined && ts.isObjectLiteralExpression(def))
-        found.push(def);
+      if (def !== undefined && ts.isObjectLiteralExpression(def)) {
+        found.push({
+          def,
+          kind:
+            n.expression.expression.text === "defineSbb" ? "block" : "machine",
+        });
+      }
     }
     ts.forEachChild(n, visit);
   };
@@ -248,6 +304,7 @@ function definitions(source: ts.SourceFile): ts.ObjectLiteralExpression[] {
 
 function graphOf(
   def: ts.ObjectLiteralExpression,
+  kind: "machine" | "block",
   helpers: Map<string, ts.FunctionDeclaration>,
 ): MachineGraph {
   const nameDef = property(def, "name");
@@ -284,15 +341,29 @@ function graphOf(
 
   const forwarded: StateEvents[] = [];
   const consumed: StateEvents[] = [];
+  const blocks: StateEvents[] = [];
+
+  // A block-level `timeout` bounds every state of the block, so it is a
+  // trigger of each of them (spec §8.4).
+  const blockTimeout = kind === "block" ? timeoutTrigger(def) : undefined;
 
   members.forEach(({ name: state, body }, index) => {
     const forwardedHere: string[] = [];
     const consumedHere: string[] = [];
+    const blocksHere: string[] = [];
 
-    for (const trigger of triggersOf(body)) {
-      const { outcomes, forwards } = collect(trigger.node, helpers, new Set());
+    const triggers = triggersOf(body);
+    if (blockTimeout !== undefined) triggers.push(blockTimeout);
+
+    for (const trigger of triggers) {
+      const {
+        outcomes,
+        forwards,
+        blocks: entered,
+      } = collect(trigger.node, helpers, new Set());
+      for (const b of entered) if (!blocksHere.includes(b)) blocksHere.push(b);
       if (outcomes.length === 0) {
-        if (trigger.isEvent)
+        if (trigger.isEvent && entered.length === 0)
           (forwards ? forwardedHere : consumedHere).push(trigger.label);
         continue;
       }
@@ -318,6 +389,11 @@ function graphOf(
           case "final":
             to = END;
             desc = FINAL_DESC[outcome.outcome];
+            break;
+          case "return":
+            // Leaving a block is leaving the diagram it is drawn in.
+            to = END;
+            desc = outcome.event ?? "sbbReturn";
         }
         addEdge(state, to, desc ? `${trigger.label} (${desc})` : trigger.label);
       }
@@ -326,9 +402,33 @@ function graphOf(
     if (forwardedHere.length > 0)
       forwarded.push({ state, events: forwardedHere });
     if (consumedHere.length > 0) consumed.push({ state, events: consumedHere });
+    if (blocksHere.length > 0) blocks.push({ state, events: blocksHere });
   });
 
-  return { name, states, edges: [...edges.values()], forwarded, consumed };
+  return {
+    name,
+    kind,
+    states,
+    edges: [...edges.values()],
+    forwarded,
+    consumed,
+    blocks,
+  };
+}
+
+/** A block's own deadline, as a trigger shared by all of its states. */
+function timeoutTrigger(def: ts.ObjectLiteralExpression): Trigger | undefined {
+  const timeout = objectProperty(def, "timeout");
+  if (timeout === undefined) return undefined;
+  const delay = property(timeout, "delay");
+  const then = property(timeout, "then");
+  const thenBody = then && value(then);
+  if (!delay || !ts.isPropertyAssignment(delay) || !thenBody) return undefined;
+  return {
+    label: delayLabel(delay.initializer),
+    node: thenBody,
+    isEvent: false,
+  };
 }
 
 /**
@@ -358,7 +458,9 @@ export function machineGraphs(
     if (ts.isFunctionDeclaration(st) && st.name) helpers.set(st.name.text, st);
   }
 
-  return definitions(source).map((def) => graphOf(def, helpers));
+  return definitions(source).map(({ def, kind }) =>
+    graphOf(def, kind, helpers),
+  );
 }
 
 /** Mermaid node ids must be identifier-like; alias anything else. */
@@ -373,12 +475,23 @@ function mermaidId(name: string): string {
  * descriptions they stretch the boxes to the width of their longest
  * event list, which wrecks the layout of any real machine. Print them
  * beside the diagram instead.
+ *
+ * `blocks` are the exception, and they earn it: a state that enters one
+ * has no outgoing edge until it returns, so leaving it out draws a dead
+ * end where the whole sequence is. One block name per line keeps the
+ * box narrow.
  */
 export function renderMermaid(graph: MachineGraph): string {
-  const decls = graph.states.map((name) => {
+  const entered = new Map(graph.blocks.map((b) => [b.state, b.events]));
+  const decls: string[] = [];
+  const descs: string[] = [];
+  for (const name of graph.states) {
     const id = mermaidId(name);
-    return id === name ? `  state ${name}` : `  state "${name}" as ${id}`;
-  });
+    const blocks = entered.get(name) ?? [];
+    const bare = id === name && blocks.length === 0;
+    decls.push(bare ? `  state ${name}` : `  state "${name}" as ${id}`);
+    for (const block of blocks) descs.push(`  ${id} : sbb ${block}`);
+  }
   const arrows = graph.edges.map(
     (e) =>
       `  ${mermaidId(e.from)} --> ${mermaidId(e.to)}: ${e.labels.join(", ")}`,
@@ -388,5 +501,6 @@ export function renderMermaid(graph: MachineGraph): string {
     ...decls,
     `  [*] --> initial_state`,
     ...arrows,
+    ...descs,
   ].join("\n");
 }
