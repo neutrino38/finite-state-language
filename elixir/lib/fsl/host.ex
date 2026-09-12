@@ -1,19 +1,19 @@
 defmodule FSL.Host do
   @moduledoc """
-  What an **embedding** of FSL provides: everything the language refuses to
-  decide for itself.
+  Connects FSL to the application it runs inside.
 
-  FSL runs state machines, and that is all it does. It knows states,
-  transitions, `on_events` and its selective-receive semantics, `stay`,
-  `goto back`, sub-FSMs, cooperative shutdown, service building blocks and the
-  journal. It knows nothing about a socket, a session, a protocol or a call.
-  Every question that needs such a thing to answer is a callback on this
-  behaviour.
+  FSL runs state machines: states, transitions and events, and nothing else. It
+  has no notion of a socket, a session, a protocol or a call. The `FSL.Host`
+  behaviour is how an application supplies those, so that a machine can drive
+  something real — SIP calls in a softswitch, XMPP conversations in a chat
+  client, a device session in a test harness. An application that implements it
+  is called an **embedding**.
 
-  ## The smallest host that is not the default
+  ## Embedding FSL in an application
 
-  Twelve callbacks, **all optional**, and a host inherits `FSL.Host.Default` for
-  every one it leaves out. So a real host can be this:
+  Twelve callbacks, all optional. Implement the ones the application needs; FSL
+  falls back to `FSL.Host.Default` for the rest. A useful host can therefore be
+  short:
 
       defmodule Fishing.Host do
         @behaviour FSL.Host
@@ -22,104 +22,154 @@ defmodule FSL.Host do
         @impl true
         def diagram_renderer, do: FSL.Diagram.Mermaid
 
-        # An event from the lake is a lake event. FSL classifies its own
-        # vocabulary and asks the embedding about everything else.
+        # Classify the application's own events. FSL classifies its own
+        # vocabulary and asks the host about everything else.
         @impl true
         def event_type(:bite), do: :lake
         def event_type(:duck), do: :lake
         def event_type(_other), do: nil
       end
 
+  A machine names its host when it declares itself:
+
       defmodule Fishing.Trip do
         use FSL.Machine, host: Fishing.Host
         # …
       end
 
-  That is a complete, working host — `samples/fishing.exs` runs it. It answers
-  two questions and inherits ten, which is what "optional" buys.
+  That pair is complete and runnable; `samples/fishing.exs` runs it. The host
+  answers two questions and inherits ten.
 
-  ## When each callback is asked
+  The name is recorded on the machine's module and read back through the
+  generated `__fsl_host__/0`. No application environment and no global
+  configuration are involved, so several embeddings can run side by side in one
+  VM: a library may drive its own machines next to yours, and this package's own
+  test suite runs against `FSL.Test.Host`, which is nobody's protocol.
 
-  Grouped by *when*, because that is what decides what a callback may do. The
-  three compile-time ones are asked while the machine is being compiled, so the
-  host module has to be **defined before the machine that names it** — a host
-  further down the same file does not exist yet, and the machine silently gets
-  the defaults.
+  ## Callbacks
 
-  | When | Callback | The question |
+  Grouped by when FSL calls them, because that determines what a callback
+  receives and what it may do.
+
+  ### While a machine compiles
+
+  These three are asked during macro expansion, with quoted AST rather than
+  values. They let a host teach FSL about the application's own event
+  vocabulary, and add clauses that every wait must carry.
+
+  | Callback | Receives | Returns |
   |---|---|---|
-  | compile time | `c:event_type/1` | what kind of event does a clause matching *this* pattern carry? |
-  | | `c:injected_clauses/1` | which clauses must every wait carry, whether or not the author thought of them? |
-  | | `c:clause_covers?/2` | does a clause the author wrote already cover one of those? |
-  | starting a run | `c:bootstrap/0` | what has to be running before any machine can act? |
-  | | `c:build_context/1` | what does this machine's `config` block *mean*? |
-  | | `c:apply_run_opts/2` | what do the run options this embedding accepts do? |
-  | during a run | `c:on_event/2` | what does the embedding do with an event, before the machine's own clause? |
-  | | `c:on_state_enter/1` | what must be forgotten when a state is entered? |
-  | | `c:account/2` | who is this run about? |
-  | | `c:spawn_child/2` | what does a freshly spawned child of this kind need? |
-  | ending a run | `c:finalize/1` | what does the embedding hold that must be released? |
-  | writing it down | `c:diagram_renderer/0` | how is a run drawn? |
+  | `c:event_type/1` | the first element of a clause pattern | an atom naming the event's category, or `nil` |
+  | `c:injected_clauses/1` | the machine's context variable | `[{name, clause}]` to prepend to every `on_events` |
+  | `c:clause_covers?/2` | an injected clause's name, and one pattern the machine wrote | `true` to drop that injection |
 
-  ## How a host is found
+  > #### Declare the host before the machine {: .warning}
+  >
+  > Because these three run during compilation, the host module must already be
+  > compiled when a machine naming it is compiled. In a single file, define the
+  > host first. A host that is not yet available is not reported as an error:
+  > the machine takes the defaults silently.
 
-  A machine names it at `use` time, the module records it, and the runner reads
-  it back through the generated `__fsl_host__/0`:
+  ### When a run starts
 
-      use FSL.Machine, host: MyApp.Host
+  | Callback | Receives | Returns |
+  |---|---|---|
+  | `c:bootstrap/0` | — | `:ok`, once whatever the application needs is running |
+  | `c:build_context/1` | the machine's `config` block | the initial context |
+  | `c:apply_run_opts/2` | the context, and the `run_instance/2` options FSL does not own | the context |
 
-  No application env and no global configuration, which is deliberate: two
-  embeddings coexist in one VM, so a library can run its own machines beside
-  yours, and the language is testable against a host that is nobody's protocol
-  (`FSL.Test.Host`, in this package's test suite).
+  ### During a run
 
-  ## A worked example: SIP
+  | Callback | Receives | Returns |
+  |---|---|---|
+  | `c:on_event/2` | the context and an event, before the machine's own clause runs | the context |
+  | `c:on_state_enter/1` | the context, on entering any state | the context |
+  | `c:account/2` | the context, and `:initial` or `:subsequent` | the label this run is listed under |
+  | `c:spawn_child/2` | the kind a child machine declared, and its pid | `:ok` |
 
-  SIP is **one** embedding — the first one, in
-  [Elixip](https://github.com/neutrino38/elixip), where this language grew up —
-  and it is worth reading as a sanity check on how much a real protocol needs,
-  not as a description of what a host must be. `SIP.FSL.Host` is about 380 lines
-  and answers eleven of the twelve:
+  ### When a run ends
 
-  | Callback | What SIP does |
+  | Callback | Receives | Returns |
+  |---|---|---|
+  | `c:finalize/1` | the context, after any children have stopped | the context |
+
+  ### When a run is written down
+
+  | Callback | Receives | Returns |
+  |---|---|---|
+  | `c:diagram_renderer/0` | — | a module implementing `FSL.Diagram` |
+
+  ## A real-world example: SIP scenarios in Elixip
+
+  [Elixip](https://github.com/neutrino38/elixip) uses FSL to run SIP scenarios —
+  calls, registrations, back-to-back user agents — and is the most demanding
+  embedding written so far. Its `SIP.FSL.Host` is roughly 380 lines and
+  implements eleven of the twelve:
+
+  | Callback | What the SIP embedding does |
   |---|---|
-  | `c:bootstrap/0` | start the transaction layer, the transport selector, the dialog layer, the session config registry, and the node's auth secret |
-  | `c:build_context/1` | route each `config` key to one of three places: a field of its own context struct, the application env for a node-wide setting, or `appdata` |
-  | `c:apply_run_opts/2` | read `:dialog_pid` and `:inbound_request` — a server instance does not create the dialog it serves |
-  | `c:on_event/2` | record which call leg and which transaction the event came from, answer what a leg that has just died owes, then stash an inbound request where the reply verbs will find it |
-  | `c:on_state_enter/1` | forget that leg and that transaction |
+  | `c:bootstrap/0` | starts the SIP transaction layer, the transport selector, the dialog layer, the session config registry and the node's auth secret |
+  | `c:build_context/1` | routes each `config` key to one of three places: a field of its own context struct, the application environment for a node-wide setting, or `appdata` |
+  | `c:apply_run_opts/2` | reads `:dialog_pid` and `:inbound_request`; a server instance does not create the dialog it serves |
+  | `c:on_event/2` | records which call leg and transaction the event came from, answers what a leg that has just died owes, then stores an inbound request where the reply verbs will find it |
+  | `c:on_state_enter/1` | forgets that leg and that transaction |
   | `c:event_type/1` | a media-server event is `:media`; anything else it is shown is `:sip` |
-  | `c:injected_clauses/1` | one clause in every wait: the media server going away |
-  | `c:clause_covers?/2` | generously — a clause matching any media event, or a catch-all, counts |
-  | `c:account/2` | the identity the inbound request asserts, once, then silence so the script can name a better one |
-  | `c:spawn_child/2` | register a child that waits for a call with the call dispatcher |
-  | `c:finalize/1` | wind down the call legs, then the media, after a bounded wait for the dialog to end |
-  | `c:diagram_renderer/0` | not implemented — the default is the right one |
+  | `c:injected_clauses/1` | adds one clause to every wait: the media server going away |
+  | `c:clause_covers?/2` | answers generously — a clause matching any media event, or a catch-all, counts |
+  | `c:account/2` | the identity the inbound request asserts, once, then silence so the scenario can supply a better one |
+  | `c:spawn_child/2` | registers a child that waits for a call with the call dispatcher |
+  | `c:finalize/1` | winds down the call legs, then the media, after a bounded wait for the dialog to end |
+  | `c:diagram_renderer/0` | not implemented; the default renderer is appropriate |
 
-  The test of whether a seam is in the right place is never "does SIP still
-  work": it will, because this code was shaped around it. The test is whether a
-  **second** embedding could be written without touching FSL. XMPP, Matrix and
-  the frameworks behind chat bots are the candidates that were used to check;
-  none of them has a dialog or a transaction, and two of them have no notion of
-  a call at all.
+  The measure of whether this behaviour is drawn in the right place is not
+  whether SIP works — it will, since FSL grew up inside it. The measure is
+  whether a *second* embedding can be written without changing FSL. XMPP,
+  Matrix and chat-bot frameworks were used to check: none has a dialog or a
+  transaction, and two have no notion of a call at all.
   """
 
   @doc """
-  Start whatever the binding's verbs need before any machine runs. Idempotent:
-  it is called once per run, and several runs share one process tree.
+  Start whatever the application needs before any machine can act, and return
+  `:ok`.
 
-  Returns `:ok`. A binding with nothing to start says so by not implementing it.
+  Called once per run, through `run/2` with `start_stack = true`. Several runs
+  share one process tree, so this must be **idempotent**: starting something
+  already started is success, not an error.
+
+      @impl true
+      def bootstrap do
+        {:ok, _} = MyApp.ConnectionPool.start()
+        :ok
+      end
+
+  A host with nothing to start does not implement it.
   """
   @callback bootstrap() :: :ok
 
   @doc """
-  Build the initial context from the scenario's `config` block.
+  Turn a machine's `config` block into its initial context.
 
-  The keyword list is the `config` of the scenario module, with any run-time
-  overrides already merged on top. What a binding does with a key is entirely
-  its business — a native property of its own context struct, a value routed
-  somewhere else entirely, or `appdata`, which is where the default host puts
-  everything.
+  `config` is the keyword list the machine declared, with any run-time overrides
+  already merged on top. What a key *means* is the host's to decide: a field of
+  a context struct of its own, a value routed somewhere else entirely, or
+  `appdata`.
+
+      @impl true
+      def build_context(config) do
+        Enum.reduce(config, %MyApp.Context{}, fn
+          {:endpoint, url}, ctx -> %{ctx | endpoint: URI.parse(url)}
+          {key, value}, ctx -> FSL.Context.appdata_set(ctx, key, value)
+        end)
+      end
+
+  A context struct of your own must splice in `FSL.Context.fields/0`; see
+  `FSL.Context`. `FSL.Host.Default` puts every key in `appdata` and returns an
+  `%FSL.Context{}`, which is what a machine with no application around it gets.
+
+  The SIP embedding routes each key to one of three destinations — a struct
+  field, the application environment, or `appdata` — which is why `config` is a
+  block and not a map: one declaration seeds both a per-session identity and a
+  node-wide setting, and the machine does not have to know which is which.
   """
   @callback build_context(config :: keyword()) :: FSL.Context.t()
 
