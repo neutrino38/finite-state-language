@@ -1,0 +1,18 @@
+FSL — the Finite State Language (TypeScript implementation)
+Copyright 2024-2026 Emmanuel Buu / La Tribuu
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+This package is one of two implementations of one language. Its sibling, the
+Elixir one, and the specification that arbitrates between them live in the same
+repository: https://framagit.org/elixip/finite-state-language
+
+The copyright range starts in 2024 because part of the Elixir sibling predates
+this package: the language began inside Elixip
+(https://framagit.org/elixip/elixip) and was extracted on 2026-09-12,
+relicensed from BUSL-1.1 to Apache-2.0 by its copyright holder so that both
+implementations ship under one licence.
+
+Most commits in this repository carry the author address emmanuel.buu@ives.fr,
+a work address of the person named above. The copyright holder is as stated
+above.

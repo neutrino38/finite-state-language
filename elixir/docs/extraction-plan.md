@@ -4,7 +4,7 @@
 implementation of FSL arrives here.
 
 The language and its engine live today inside
-[Elixip](https://github.com/neutrino38/elixip), under
+[Elixip](https://framagit.org/elixip/elixip), under
 `apps/elixip2/lib/dsl/`, compiled with its SIP stack and unusable without it.
 The intent recorded in [`../README.md`](../README.md) is to extract them as a
 standalone Elixir package — *"generic states / transitions / `on_events` /
@@ -20,8 +20,8 @@ it. What is built today is described in Elixip's [`DESIGN-FSL.md`][design-fsl],
 and the language reference an integrator reads is [`FSL.md`][fsl-md]; this
 document assumes both and repeats neither.
 
-[design-fsl]: https://github.com/neutrino38/elixip/blob/master/docs/design/DESIGN-FSL.md
-[fsl-md]: https://github.com/neutrino38/elixip/blob/master/FSL.md
+[design-fsl]: https://framagit.org/elixip/elixip/-/blob/master/docs/design/DESIGN-FSL.md
+[fsl-md]: https://framagit.org/elixip/elixip/-/blob/master/FSL.md
 
 > **Reading the paths.** Every `apps/…`, `docs/…`, `scenarios/…` and
 > `LICENSE*.md` path below is in the **Elixip** repository, which is where the
@@ -1008,9 +1008,12 @@ What that costs, all of it in P4 (§7) except the last line:
 - `package: [licenses: ["Apache-2.0"]]` in the FSL `mix.exs`. `mix sbom.cyclonedx`
   reads that key, so the SBoM Elixip generates will correctly show the
   dependency as Apache-2.0 while every elixip component stays BUSL-1.1;
-- `NOTICE` naming IVèS as the copyright holder and recording that the code was
-  extracted from Elixip, which is what makes the provenance readable rather than
-  merely legal;
+- `NOTICE` naming the copyright holder and recording that the code was extracted
+  from Elixip, which is what makes the provenance readable rather than merely
+  legal. **This line said "IVèS" and was wrong** — corrected 2026-09-12, when P4
+  wrote the file: the holder is **Emmanuel Buu / La Tribuu**, which is the
+  Licensor named by Elixip's own `LICENSE.md`, and the copyright of extracted
+  code follows the work it came from;
 - a paragraph in **both** `LICENSE.md` and `LICENSE_fr.md` at **Elixip's**
   root, saying that the FSL engine was extracted and relicensed and where it now
   lives. The English text is the binding one and the French translation tracks

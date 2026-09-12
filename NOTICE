@@ -1,0 +1,16 @@
+FSL — the Finite State Language
+Copyright 2024-2026 Emmanuel Buu / La Tribuu
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+This repository holds two implementations of one language — `typescript/` and
+`elixir/` — and the specification that arbitrates between them, `spec/`.
+
+The Elixir implementation was extracted from Elixip
+(https://framagit.org/elixip/elixip) on 2026-09-12 and relicensed from
+BUSL-1.1 to Apache-2.0 by its copyright holder, so that both implementations
+ship under one licence.
+
+Most commits in this repository carry the author address emmanuel.buu@ives.fr,
+a work address of the person named above. The copyright holder is as stated
+above.

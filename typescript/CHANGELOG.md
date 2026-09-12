@@ -13,7 +13,7 @@ Service Building Blocks, reserved in the spec since §8.4 was written and
 now implemented — in the shape both dialects of FSL agree on:
 `finite-state-language` here and Elixip's DSL on the BEAM. The rule is
 recorded in the spec (§11, decision 5) and the shared table lives in
-[`elixip/docs/design/DESIGN-SBB.md`](https://github.com/neutrino38/elixip/blob/master/docs/design/DESIGN-SBB.md)
+[`elixip/docs/design/DESIGN-SBB.md`](https://framagit.org/elixip/elixip/-/blob/master/docs/design/DESIGN-SBB.md)
 §10: a concept present in both dialects is spelled the same in both.
 
 Additive over 0.1.2 — nothing existing changes behaviour, and the pending

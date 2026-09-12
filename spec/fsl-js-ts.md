@@ -1,7 +1,10 @@
 # FSL for TypeScript / JavaScript — Language Specification
 
-Status: draft v0.2 — 2026-08-15 (post first review)
-Lineage: [Elixip FSL](https://github.com/neutrino38/elixip/blob/master/FSL.md)
+Status: draft v0.3 — 2026-09-12 (post clause-by-clause reconciliation, §12)
+Lineage: [Elixip FSL](https://framagit.org/elixip/elixip/-/blob/master/FSL.md);
+the Elixir implementation is now its own package —
+[`elixir/`](../elixir), hex `finite_state_language`, OTP app `:fsl`, modules
+`FSL.*`, design in [`elixir/docs/design.md`](../elixir/docs/design.md)
 
 FSL (Finite State Language) is a small, readable language for describing
 finite state machines, embedded in TypeScript. It is the TypeScript sibling
@@ -230,8 +233,14 @@ function Phone() {
 
 ## 3. Concepts
 
-| Elixip DSL                  | FSL/TS                                        |
+Since 2026-09-12 the Elixir column is **FSL Elixir** (`FSL.Machine` and
+friends), not "the Elixip DSL": the language was extracted from Elixip into a
+package of its own, and SIP is one *binding* of it. Where a row names a SIP
+module it now names the binding, not the language.
+
+| FSL Elixir                  | FSL/TS                                        |
 |-----------------------------|-----------------------------------------------|
+| `use FSL.Machine`           | `defineMachine<Ctx, Ev>({...})`               |
 | `state name do ... end`     | key in the `states` object                    |
 | synchronous state body      | `enter(ctx, fx)`                              |
 | `on_events do ... end`      | `on: { "event:type": handler, ... }`          |
@@ -239,11 +248,14 @@ function Phone() {
 | `goto state, "desc"`        | `return goto("state", "desc")`                |
 | `goto next`                 | `return next("desc")`                         |
 | `goto loop`                 | `return loop("desc")` (re-runs `enter`)       |
-| —                           | `return stay()` (handle without re-entering)  |
+| `stay "desc"`               | `return stay("desc")`                         |
 | `scenario_success("r")`     | `return success("r")`                         |
 | `scenario_failure("r")`     | `return failure("r")`                         |
 | `scenario_aborted("r")`     | `return aborted("r")` / cooperative shutdown  |
-| `sip_ctx` + `appdata_*`     | typed `ctx` (whole context is user-defined)   |
+| `goto back`                 | — (no history helper in v1, §11.4)            |
+| `fsl_ctx` / `sip_ctx` + `appdata_*` | typed `ctx` (whole context is user-defined) |
+| `FSL.Context` extended by a binding | the `Ctx` type parameter              |
+| an `FSL.Host` implementation | the app translating stack callbacks into events (§1.3, §12.2) |
 | process mailbox             | machine event queue (see §6.3)                |
 | `spawn_fsm / notify`        | `fx.spawn / fx.notify / fx.notifyParent`      |
 | `sbb_fsm / sbb_return`      | `fx.sbb / fx.sbbReturn` (§8.4)                |
@@ -307,9 +319,24 @@ last expression" a non-issue: in TS it is simply `return`.
 - `next(desc?)` — move to the state declared after the current one.
 - `loop(desc?)` — re-enter the current state; `enter` runs again, `after`
   re-arms.
-- `stay(desc?)` — remain in the state **without** re-running `enter`.
-  This has no Elixir equivalent (a `receive` loop always re-enters); UIs need
+- `stay(desc?)` — remain in the state **without** re-running `enter`. UIs need
   it constantly (e.g. keep a call timer running while handling a mute event).
+
+  This was written as having no Elixir equivalent, and **that has been false
+  since Elixir's 1.5.0** (§11.4, and the correction of §12.3): `stay` is one of
+  the two constructs FSL Elixir adopted *from* this dialect. Its semantics
+  converge on the observable behaviour and differ in mechanism:
+
+  | | FSL/TS | FSL Elixir |
+  |---|---|---|
+  | re-runs the state body | no | no |
+  | the deadline | armed on entry, relative; `stay` does not re-arm it, so it keeps running | computed **absolutely** on entry (`FSL.Machine.deadline/1`); `stay` re-enters the wait with `remaining_timeout/1` |
+  | how it is implemented | a transition value the engine reads | a **rewrite of the clause AST** into a call back into the wait closure, because a `{:stay, …}` descriptor makes the compiler prove a dead branch in every state that does not stay |
+  | where it is refused | nowhere — `void` from a handler means `stay()` | outside an `on_events`, at compile time, naming the author's file and line |
+
+  The absolute deadline is the load-bearing half on both sides, whatever the
+  mechanism: a keep-alive answered every ten seconds must not hold a
+  thirty-second answer timeout open forever.
 - `success(reason?)` / `failure(reason?)` / `aborted(reason?)` — jump to the
   terminal states and settle `machine.done`.
 - Returning `void`/`undefined` from an `on` handler ≡ `stay()`.
@@ -360,8 +387,19 @@ an INVITE that races a state change must not be lost.
 - The `"*"` catch-all matches everything, so a state declaring it drains the
   queue — the explicit "flush point" of a flow.
 
-This is exactly the selective-receive contract; what a browser adds is
-**hygiene**, because a UI can produce unbounded stale events:
+**FSL Elixir has no pending queue, and needs none.** `on_events` compiles to a
+real `receive`, so an unmatched message stays in the process mailbox and a later
+state's `receive` collects it — the BEAM gives for free what this engine had to
+build. Three of the items below therefore have **no Elixir counterpart, by
+design and not by omission**: `pending: { max }` (a mailbox is bounded by memory,
+and a machine that accumulates is a bug to find, not a queue to cap),
+`snapshot.pending` (`:erlang.process_info(pid, :messages)` is the equivalent, and
+it is a debugging tool rather than API), and `fx.dropPending` — there is no
+Elixir way to selectively purge a mailbox, and the Elixir answer to a stale event
+is a clause that matches and discards it.
+
+What a browser adds is **hygiene**, because a UI can produce unbounded stale
+events:
 
 - the queue is **bounded** (`pending: { max }`, default 32); on overflow the
   oldest event is dropped with a warning log;
@@ -625,7 +663,7 @@ The names were reserved here before either dialect had code, for the reason the
 Node supervision of §9 is recorded: the one thing that must not happen twice is
 the naming. Elixir shipped the layer in its 1.5.0, and 0.2.0 ships it here with
 the two contracts — not only the two vocabularies — already together. See
-[`elixip/docs/design/DESIGN-SBB.md`](https://github.com/neutrino38/elixip/blob/master/docs/design/DESIGN-SBB.md),
+[`elixip/docs/design/DESIGN-SBB.md`](https://framagit.org/elixip/elixip/-/blob/master/docs/design/DESIGN-SBB.md),
 whose §10 holds the shared vocabulary table for both dialects.
 
 A **Service Building Block** is a reusable fragment of a state machine behind a
@@ -874,7 +912,111 @@ Settled (review of 2026-08-15):
    layer shipped: 0.2.0 is the first release here to carry `fx.sbb`, and it
    carries the shared contract from the start.
 
+   **Correction, 2026-09-12.** Half of that last sentence was not true when it
+   was written and is recorded here rather than quietly dropped: *"Elixir took
+   this dialect's per-block `cleanup`"*. It had not. A block that reserved
+   something had to release it before every `sbb_return` and on every branch,
+   which is exactly the failure a per-block `cleanup` exists to prevent — a
+   branch that forgot leaked with nothing in the log.
+
+   **Settled the same day**: `FSL.Block` takes `cleanup/1`, run on every way out
+   of a block — a return, its own deadline, a terminal unwinding through it, a
+   cooperative shutdown passing through, and an **enclosing** block's deadline
+   abandoning it. That last exit is the one no hand-written release could have
+   covered, and it is the argument for the hook rather than a bonus: a block is
+   a subroutine of a machine that is often dying, and "the host is tearing down
+   anyway" is not a reason to skip the release, because the host's own cleanup
+   does not know what a block took.
+
+   One difference from this dialect, and it is forced: the Elixir hook is
+   **threaded** — what a block reserved lives in the host's context, so
+   releasing it means returning a context. Here `cleanup(ctx)` mutates, so there
+   is nothing to return.
+
 Still open:
 
 1. `meta` snapshot exposure: raw per-state block vs. merged with
    machine-level defaults (see §7.3) — under discussion.
+
+---
+
+## 12. Reconciliation with FSL Elixir — 2026-09-12
+
+This spec is the **arbiter between the two implementations**, so a divergence is
+only legitimate once it is written here. The pass below was run clause by clause
+when the Elixir implementation was extracted from Elixip into a package of its
+own ([`elixir/docs/extraction-plan.md`](../elixir/docs/extraction-plan.md), P4);
+what it found is recorded in three kinds: **corrections** to claims this document
+made about Elixir that were no longer true, **divergences** that are deliberate
+and permanent, and **commitments** one side owes the other.
+
+### 12.1 Divergences that are deliberate and permanent
+
+| Topic | FSL/TS | FSL Elixir | Why it cannot converge |
+|---|---|---|---|
+| unmatched events | a pending queue, bounded, inspectable, purgeable (§4.2) | the process mailbox, via a real selective `receive` | the BEAM has the primitive; JS does not. `fx.dropPending` has no Elixir counterpart at all |
+| the error channel | exceptions ⇒ `failure` | `lasterr` checked by every transition macro, **plus** exceptions and exits ⇒ `failure` | Elixir's verbs return errors in the context so a machine reads without an `if` after every call; TS has no such convention to serve |
+| where a block may be entered | `enter`, a handler and an `after.then` alike | a state body only, refused in an `on_events` clause at compile time | Elixir's wait deadline is absolute, so a block called from a clause would burn the host's remaining timeout. TS's timer is relative, so it re-arms on return and the question does not arise |
+| `stay` and the deadline | the timer keeps running; nothing to re-arm | the wait re-entered with `remaining_timeout/1` | same observable behaviour, different mechanism (§3.3) |
+| spawning by file path | not supported | `spawn_fsm "child.exs"`, resolved against the declaring file | `.exs` is loaded at run time; there is no TS equivalent, and §8.4 already records it as a missing concept rather than a divergence |
+| reserved names | `terminal_success_state`, `terminal_failure_state` | `next`, `loop`, `back`, and the state `:__shutdown__` | each dialect reserves what its own syntax would otherwise let a user shadow |
+
+### 12.2 One question, two answers: how the language stays protocol-free
+
+Both dialects promise a core that imports no communication stack, and the
+extraction made it visible that **they keep that promise differently** — which is
+a divergence worth naming, because a reader crossing over will look for the other
+one's mechanism and not find it.
+
+- **FSL/TS has no callback surface at all** (§1.3). The application stores stack
+  handles in the context and translates stack callbacks into events with
+  `machine.send(...)`. A ~50-line binding file is the whole coupling.
+- **FSL Elixir has a behaviour**, `FSL.Host`, with twelve callbacks. A binding
+  needs it because on the BEAM it must act *inside* the machine's process and
+  *during* the machine's compilation: classify a `receive` pattern at
+  macro-expansion time, prepend a clause to every wait, act on an event before
+  the machine's own clause runs, and release its resources in a fixed position of
+  a teardown order. None of those is expressible as "translate a callback into an
+  event".
+
+Neither is portable to the other, and neither is a defect. What *is* shared is
+the rule both follow: the test of a seam is whether a **second** binding could be
+written without touching the language.
+
+### 12.3 Corrections to this document
+
+1. **§3.3 claimed `stay()` "has no Elixir equivalent".** False since Elixir's
+   1.5.0, and §11.4 already said so — the two statements had contradicted each
+   other for a month. §3.3 is rewritten, with the semantics of both sides stated
+   side by side.
+2. **§11.6 claimed "Elixir took this dialect's per-block `cleanup`".** It did
+   not; see the correction inline. Reclassified as a commitment (§12.4).
+3. **The §3 table said "Elixip DSL".** The Elixir column is the *language* now,
+   and a row naming a SIP module names the *binding*. Two rows were added for
+   what has no counterpart on one side or the other (`goto back`, the host).
+
+### 12.4 Commitments
+
+Settled since this pass opened: **a per-block `cleanup`**, which Elixir owed and
+delivered on 2026-09-12 (§11.6). What remains:
+
+| Owed by | What | Why it matters |
+|---|---|---|
+| TS | `goto back`, if a screen ever needs it (§11.4) | deferred, not refused; Elixir's semantics are the reference — one slot and not a stack, written only on a real state change, two consecutive calls toggling, no previous state being a clean failure |
+| both | `queue()`, the `Queue()` of the field | named in Elixip's SBB design as future work; it takes names for objects a server owns, so it is not a language question yet |
+
+### 12.5 Checked and found to agree
+
+Recorded so the next pass does not re-derive them: the transition vocabulary and
+its `desc` argument; declaration order defining `next`; `initial_state` being
+mandatory and playing `main()`; the three outcomes and `aborted` being distinct
+from `failure` so a controller-driven stop is not tallied as one; the
+inter-machine event names (`parent:msg` / `child:msg` / `child:exit` ↔
+`{:parent_msg, …}` / `{:child_msg, …}` / `{:child_exit, …}`); cooperative
+shutdown and its grace period before a hard stop; the Valet contract — exactly
+one event ever, the timeout arbitrated at one point, a late or post-terminal
+result discarded; HTTP-as-events carrying the same guarantee in a subpath /
+optional dependency; and the whole of the SBB contract of §8.4 — the fixed
+`{namespace, outcome, data}` shape, the declared vocabulary refused at compile
+time, the per-entry sandbox fresh unless `resume:`, the block-level bound, and
+terminals unwinding the whole stack while `sbb_return` is the only way back.

@@ -1,13 +1,18 @@
-# FSL — Finite State Language for TypeScript & JavaScript
+# FSL — Finite State Language
 
-> **The current state of affairs:** early design. Specs are written, code is
-> coming. Now is exactly the right time to state your opinion.
+> **Where this stands:** two implementations, one language.
+> [`finite-state-language@0.2.0`](https://www.npmjs.com/package/finite-state-language)
+> on npm for TypeScript and JavaScript,
+> [`finite_state_language@0.2.0`](https://hex.pm/packages/finite_state_language)
+> on hex for Elixir. The API is still soft — now is a good time to state your
+> opinion.
 
-FSL is a tiny, readable language for describing **finite state machines**,
-embedded in TypeScript and consumable from plain JavaScript. It exists to
-build **stateful communication frontends** — web phones, web chat, video
-relay, bot UIs — where the interface must follow the life of a call:
-registering, ringing, connected, failed, and every state in between.
+FSL is a tiny, readable language for describing **finite state machines**. In
+TypeScript and plain JavaScript it builds **stateful communication frontends** —
+web phones, web chat, video relay, bot UIs — where the interface must follow the
+life of a call: registering, ringing, connected, failed, and every state in
+between. In Elixir it describes the other end of that call: one machine per
+process, driving a SIP stack, a test scenario or a server script.
 
 No framework lock-in. No heavyweight runtime. Just states, events and
 transitions you can actually read.
@@ -28,14 +33,14 @@ If you can read that, you already speak FSL.
 
 ## Lineage: Elixip
 
-FSL is the TypeScript sibling of the DSL at the heart of
-[**Elixip**](https://github.com/neutrino38/elixip), an Elixir SIP framework
+FSL began as the DSL at the heart of
+[**Elixip**](https://framagit.org/elixip/elixip), an Elixir SIP framework
 where call scenarios are written as explicit state machines — declared
 states, declared transitions, events collected per state, readability above
-all ([the Elixip FSL](https://github.com/neutrino38/elixip/blob/master/FSL.md)).
-That style has proven itself describing real SIP call flows on the backend;
-FSL brings the same discipline to the browser, adapted to how UIs actually
-work.
+all. That style proved itself describing real SIP call flows on the backend.
+The TypeScript implementation brings the same discipline to the browser,
+adapted to how UIs actually work; the Elixir one is that original DSL, lifted
+out of the SIP stack and published on its own.
 
 ## Why states, stated explicitly?
 
@@ -105,6 +110,15 @@ function Phone() {
 }
 ```
 
+Elixir — one machine per process, and a `mix.exs` line:
+
+```elixir
+{:finite_state_language, "~> 0.2"}
+```
+
+See [`elixir/README.md`](elixir/README.md) and the runnable
+[`elixir/samples/`](elixir/samples/README.md).
+
 ## Repository layout
 
 FSL is a language first, an implementation second — this repository is
@@ -113,8 +127,8 @@ structured accordingly:
 ```
 spec/          the language: semantics, event model, design decisions
 typescript/    the TypeScript implementation (npm: finite-state-language)
-elixir/        reserved: the Elixir implementation, to be extracted from
-               Elixip's DSL (same states, same event model, no SIP coupling)
+elixir/        the Elixir implementation (hex: finite_state_language), extracted
+               from Elixip's DSL — same states, same event model, no SIP coupling
 ```
 
 The two implementations must stay semantically aligned; the spec is the
@@ -143,6 +157,7 @@ service, the pun has done its job.
 - [x] Service building blocks (`fx.sbb` / `fx.sbbReturn`)
 - [ ] JsSIP web phone — full example, as its own project
 - [x] `finite-state-language@0.2.0` on npm
+- [x] `finite_state_language@0.2.0` on hex
 
 ## Get involved
 
