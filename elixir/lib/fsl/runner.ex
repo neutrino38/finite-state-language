@@ -36,7 +36,7 @@ defmodule FSL.Runner do
 
   `start_stack = true` is the one-shot mode used by `mix scenario` / `elixipp`.
   `start_stack = false` assumes the stack is already up (started once via
-  `FSL.Machine.start_stack/0`) and is the basis for running many instances in
+  `c:FSL.Host.bootstrap/0`) and is the basis for running many instances in
   parallel later on.
   """
   @spec run(module(), boolean()) :: :ok | {:error, term()}

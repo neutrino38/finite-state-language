@@ -64,12 +64,12 @@ framework — could be written without touching FSL. SIP is the first, in
 Extracted from Elixip and building here; **not yet published to hex**. The
 package will be `finite_state_language` (OTP app `:fsl`, modules `FSL.*`),
 licensed Apache-2.0 — decided 2026-09-12, see
-[docs/extraction-plan.md](docs/extraction-plan.md) §8, which is also the record
+[docs/extraction-plan.md](https://github.com/neutrino38/finite-state-language/blob/main/elixir/docs/extraction-plan.md) §8, which is also the record
 of every seam and why it is where it is.
 
 Remaining before a first release: the `LICENSE`/`NOTICE` files, `CHANGELOG.md`,
 ex_doc output, a reconciliation with
-[the cross-language spec](../spec/fsl-js-ts.md) clause by clause, and the rest of
+[the cross-language spec](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md) clause by clause, and the rest of
 Elixip's FSL test suite, which still lives there.
 
 The language reference an integrator reads is

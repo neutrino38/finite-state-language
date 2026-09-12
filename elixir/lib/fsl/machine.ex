@@ -506,13 +506,26 @@ defmodule FSL.Machine do
     end
   end
 
-  @doc false
-  # Absolute deadline for an `on_events` wait, so `stay` can re-enter it without
-  # granting a fresh timeout.
+  @doc """
+  Turn an `after` timeout into an **absolute** deadline, computed once when an
+  `on_events` is entered.
+
+  This pair is what makes `stay` safe. The timeout of a wait is the deadline of
+  the *wait*, not of each event: a `stay` comes back with
+  `remaining_timeout/1`, so a keep-alive answered every ten seconds cannot hold a
+  thirty-second answer timeout open forever — a bug wearing a feature's clothes.
+
+  Called by the code `on_events` generates; a machine never writes it.
+  """
+  @spec deadline(timeout()) :: integer() | :infinity
   def deadline(:infinity), do: :infinity
   def deadline(ms) when is_integer(ms), do: System.monotonic_time(:millisecond) + ms
 
-  @doc false
+  @doc """
+  What is left of a deadline from `deadline/1`, floored at zero — the timeout a
+  `stay` re-enters its wait with.
+  """
+  @spec remaining_timeout(integer() | :infinity) :: non_neg_integer() | :infinity
   def remaining_timeout(:infinity), do: :infinity
 
   def remaining_timeout(deadline),
@@ -733,11 +746,18 @@ defmodule FSL.Machine do
     end
   end
 
-  @doc false
-  # Called by a face module's `__using__` so that `use SBB.Call` teaches the
-  # scenario the namespaces of the blocks it is about to call, for the whole
-  # module rather than from this state on.
-  #
+  @doc """
+  Teach a machine the namespace of a service building block it is about to call,
+  for the whole module rather than from one state on.
+
+  Called by a *face* module's `__using__` — a module that publishes a block's
+  verb — because `on_events` cannot classify a block's return from a table: the
+  namespace is the block author's word, and an unrecognised leading atom falls
+  through to the binding's fallback (for SIP, an arrow *from the peer*, and a
+  block's return came from nobody). `sbb_fsm/2` records it on its own.
+  """
+  @spec register_namespace(module(), atom()) :: :ok | nil
+  # Read-modify-write on a plain attribute rather than `accumulate: true`,
   # Read-modify-write on a plain attribute rather than `accumulate: true`,
   # deliberately: this list is written and read during macro EXPANSION, while a
   # `Module.register_attribute` call sitting in `__using__`'s quote is executed

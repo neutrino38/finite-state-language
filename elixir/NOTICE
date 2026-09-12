@@ -1,0 +1,22 @@
+FSL for Elixir — the Finite State Language
+Copyright 2025-2026 Emmanuel Buu / La Tribuu
+
+This product includes software developed as part of Elixip
+(https://github.com/neutrino38/elixip).
+
+The code in this directory was extracted from Elixip on 2026-09-12 —
+`apps/elixip2/lib/dsl/` and the FSM half of its session context — and
+**relicensed from BUSL-1.1 to Apache-2.0** by its copyright holder, so that the
+two implementations of the language, Elixir and TypeScript, ship under one
+licence.
+
+Elixip itself remains under the Business Source License 1.1. That is the
+direction the relicensing travels and the only one it can: a source-available
+work may depend on a permissive one, and Elixip now consumes this package as an
+ordinary dependency. Nothing here is subject to BUSL-1.1, and no BUSL-1.1 term —
+including the Additional Use Grant and the competing-product restriction — applies
+to it.
+
+The provenance is recorded because it is readable, not merely because it is
+required: the design of what is here, and of every seam that made the extraction
+possible, is docs/design.md and docs/extraction-plan.md.

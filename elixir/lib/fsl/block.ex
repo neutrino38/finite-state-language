@@ -80,7 +80,21 @@ defmodule FSL.Block do
   `:ctx_var` and `:host` are passed through to `FSL.Machine`, so a binding's
   facade declares them once for its blocks as it does for its machines.
 
-  Design: `docs/design/DESIGN-SBB.md`.
+  ## A block releases what it reserved, on every branch
+
+  There is **no per-block `cleanup`**. `cleanup/1` is called once, by the
+  runner's teardown, on the *machine's* module; `run_sbb/3` only pops the frame
+  and disarms the deadline. So a block that reserves something has to release it
+  before every `sbb_return` and on every terminal — and a branch that forgets
+  leaks with nothing in the log, which is the failure a per-block hook exists to
+  prevent.
+
+  The TypeScript dialect has that hook, and the cross-language spec records it
+  as a commitment this side owes rather than as a difference between the two
+  (`spec/fsl-js-ts.md` §12.4). Until it lands, a host cannot assume a block
+  cleaned up after itself.
+
+  Design: `docs/design.md` §6.
   """
 
   defmacro __using__(opts) do
