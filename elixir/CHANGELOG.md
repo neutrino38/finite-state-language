@@ -52,9 +52,12 @@ Instrumentation:
 - `FSL.Monitor` — a live registry, one row per run, with the columns an embedding
   declares at start and writes with `note/2`; `subscribe/1` pushes
   `{:fsl_monitor, {:updated | :cleared, …}}`;
-- `FSL.Journal` and `FSL.Diagram.PlantUML` — a per-run journal in the process
-  dictionary, rendered as a sequence diagram whose lane rule is by exclusion, so
-  a protocol this renderer has never heard of is still drawn from the peer;
+- `FSL.Journal`, and two renderers behind the `FSL.Diagram` behaviour —
+  `FSL.Diagram.PlantUML` and `FSL.Diagram.Mermaid`. A per-run journal in the
+  process dictionary, rendered as a sequence diagram whose lane rule is **by
+  exclusion**, so a protocol a renderer has never heard of is still drawn from
+  the peer. Mermaid is what the TypeScript sibling emits and what GitHub renders
+  with no toolchain; a binding picks one with `c:FSL.Host.diagram_renderer/0`;
 - `FSL.Loader`, `FSL.Child`, `FSL.Valet`, and `FSL.HTTP` (HTTP-as-events, the one
   module needing `Req`, declared `optional: true`).
 
@@ -84,10 +87,19 @@ binding meets exactly these:
 - **`__scenario_type__/0` is an opaque slot** with default `nil`. `uas :register`
   is a SIP macro on SIP's facade;
 - **the monitor's row is flat and its host columns are declared**, which is what
-  kept every consumer of those rows unchanged.
+  kept every consumer of those rows unchanged;
+- **`:log_sequence` is read under `:fsl`**, not under a binding's app. A binding
+  that keeps its configuration in one namespace names it once with
+  `config :fsl, :log_sequence_app, :my_app`.
 
 ### Fixed
 
+- **`FSL.Monitor.subscribe/1` returned `:ok`**, so a caller had to read
+  `calls/0` separately — two calls with a window between them, survivable in one
+  order only. It returns the snapshot, taken in the call that registers the
+  subscriber;
+- **a subscriber was never monitored**, so one that died stayed in the set for
+  the life of the node and every later change was `send/2` into the void;
 - `stay` outside an `on_events` raised a `CompileError` with **no file and no
   line**, unlike the three other compile-time checks. A check whose message
   points at nothing stops helping the author — and once the language is a package,
@@ -101,6 +113,4 @@ binding meets exactly these:
   recorded there as deliberate divergences rather than resolved;
 - ~91 of Elixip's FSL tests are still in Elixip, where they are the proof that
   the host wiring works; a further ~20 would have to be split rather than moved;
-- `FSL.Diagram.Mermaid`: the TypeScript sibling ships `toMermaid()` and Mermaid
-  renders in GitHub with no toolchain, so the two dialects should converge on it.
-  PlantUML is what this release has.
+- `mix hex.publish`.

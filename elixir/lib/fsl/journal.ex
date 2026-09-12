@@ -96,7 +96,7 @@ defmodule FSL.Journal do
             FSL.Diagram.PlantUML
           )
 
-        content = renderer.to_plantuml(events(), meta)
+        content = renderer.render(events(), meta)
         path = renderer.filename(meta)
         clear()
 

@@ -48,9 +48,12 @@ defmodule FSL.Diagram.PlantUML do
   # Media commands/events are drawn in a distinct color to stand out from SIP.
   @media_color "#DarkOrange"
 
+  @behaviour FSL.Diagram
+
   @doc "Render the full PlantUML document as a String."
-  @spec to_plantuml([map()], map()) :: String.t()
-  def to_plantuml(events, meta) when is_list(events) and is_map(meta) do
+  @impl FSL.Diagram
+  @spec render([map()], map()) :: String.t()
+  def render(events, meta) when is_list(events) and is_map(meta) do
     [
       header(meta),
       "@startuml",
@@ -68,16 +71,24 @@ defmodule FSL.Diagram.PlantUML do
   Build the `.puml` filename from metadata: `<scenario>_<pid>.puml`, with the pid
   sanitized to keep only digits and dots (`#PID<0.123.0>` → `0.123.0`).
   """
+  @impl FSL.Diagram
   @spec filename(map()) :: String.t()
   def filename(meta) when is_map(meta) do
     "#{meta.scenario}_#{safe_pid(meta.pid)}.puml"
   end
 
-  @doc "Sanitize an inspected pid into a filename-safe string."
+  @doc """
+  The PlantUML document, under the name it had before renderers were pluggable.
+  `render/2` is the callback; this delegates to it, because a document produced
+  by *this* module is a PlantUML one and calling it so reads better at a call
+  site that chose it deliberately.
+  """
+  @spec to_plantuml([map()], map()) :: String.t()
+  defdelegate to_plantuml(events, meta), to: __MODULE__, as: :render
+
+  @doc "See `FSL.Diagram.safe_pid/1`."
   @spec safe_pid(String.t()) :: String.t()
-  def safe_pid(pid_string) do
-    String.replace(to_string(pid_string), ~r/[^0-9.]/, "")
-  end
+  defdelegate safe_pid(pid_string), to: FSL.Diagram
 
   # ── Header (PlantUML comment lines start with a single quote) ───────────────
 
@@ -93,10 +104,9 @@ defmodule FSL.Diagram.PlantUML do
     ]
   end
 
-  # Secrets are never written out, even though the plaintext password is normally
-  # already absent from the context (it is hashed into :ha1 at config time).
-  defp mask(key, _value) when key in [:passwd, :password, :ha1, :ha1b], do: "****"
-  defp mask(_key, value), do: inspect(value)
+  # Secrets are never written out, even though a hashed credential is normally
+  # all a context holds by then. Shared with every renderer: FSL.Diagram.mask/2.
+  defp mask(key, value), do: FSL.Diagram.mask(key, value)
 
   # ── Participants ────────────────────────────────────────────────────────────
 
@@ -116,20 +126,14 @@ defmodule FSL.Diagram.PlantUML do
   defp participant(alias_name, nil), do: "participant #{alias_name}"
   defp participant(alias_name, label), do: ~s(participant "#{label}" as #{alias_name})
 
-  defp media?(events) do
-    Enum.any?(events, fn
-      %{kind: :command, type: :media} -> true
-      %{kind: :transition, type: :media} -> true
-      _ -> false
-    end)
-  end
+  defp media?(events), do: FSL.Diagram.media?(events)
 
   # ── Body ──────────────────────────────────────────────────────────────────
 
   defp body(events) do
     {lines, _current_state} =
       Enum.reduce(events, {[], nil}, fn event, {acc, current} ->
-        {rendered, next} = render(event, current)
+        {rendered, next} = render_event(event, current)
         {acc ++ rendered, next}
       end)
 
@@ -137,30 +141,30 @@ defmodule FSL.Diagram.PlantUML do
   end
 
   # Outbound media command → colored arrow towards the media server.
-  defp render(%{kind: :command, type: :media, name: name}, current) do
+  defp render_event(%{kind: :command, type: :media, name: name}, current) do
     {["#{@local} -[#{@media_color}]> #{@media} : #{media_label(name)}"], current}
   end
 
   # A command that went nowhere — a timer armed, a database read, a block
   # entered: a note, because there is no lane it travelled to.
-  defp render(%{kind: :command, type: type, name: name}, current)
+  defp render_event(%{kind: :command, type: type, name: name}, current)
        when type in @self_note_types do
     {["note over #{@local} : #{name}"], current}
   end
 
   # Anything else is a protocol command, and a protocol command goes to the peer.
-  defp render(%{kind: :command, name: name}, current) do
+  defp render_event(%{kind: :command, name: name}, current) do
     {["#{@local} -> #{@remote} : #{method_label(name)}"], current}
   end
 
   # First transition (no previous state) = entering the initial state.
-  defp render(%{kind: :transition, to: to}, nil) do
+  defp render_event(%{kind: :transition, to: to}, nil) do
     {["note over #{@local} : #{to}"], to}
   end
 
   # Subsequent transition: optionally an inbound arrow (from the peer for a SIP
   # event, from the media server for a media event), then the state-change note.
-  defp render(%{kind: :transition, to: to, event: event, type: type}, from) do
+  defp render_event(%{kind: :transition, to: to, event: event, type: type}, from) do
     labelled? = event not in ["", "start"]
 
     inbound =
@@ -186,7 +190,7 @@ defmodule FSL.Diagram.PlantUML do
   end
 
   # Terminal outcome → coloured note.
-  defp render(%{kind: :terminal, outcome: outcome, reason: reason}, current) do
+  defp render_event(%{kind: :terminal, outcome: outcome, reason: reason}, current) do
     label = if reason in ["", nil], do: to_string(outcome), else: "#{outcome}: #{reason}"
     color = if outcome == :succeeded, do: "#LightGreen", else: "#Pink"
     {["note over #{@local} #{color} : #{label}"], current}
@@ -194,21 +198,6 @@ defmodule FSL.Diagram.PlantUML do
 
   # ── Helpers ─────────────────────────────────────────────────────────────────
 
-  # A prefix rule over command names, not a SIP table: "send_INVITE" → "INVITE",
-  # "send_auth_REGISTER" → "REGISTER (auth)", "send_message" → "MESSAGE".
-  defp method_label(name) do
-    base = String.replace_prefix(name, "send_", "")
-
-    {base, suffix} =
-      if String.starts_with?(base, "auth_") do
-        {String.replace_prefix(base, "auth_", ""), " (auth)"}
-      else
-        {base, ""}
-      end
-
-    String.upcase(base) <> suffix
-  end
-
-  # "media_connect" → "connect", "media_play" → "play", "media_start_echo" → "start_echo".
-  defp media_label(name), do: String.replace_prefix(name, "media_", "")
+  defp method_label(name), do: FSL.Diagram.command_label(name)
+  defp media_label(name), do: FSL.Diagram.media_label(name)
 end

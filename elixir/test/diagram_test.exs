@@ -158,13 +158,16 @@ defmodule FSL.DiagramTest do
 
     File.rm(path)
 
-    Application.put_env(:elixip2, :log_sequence, true)
+    # `:fsl`, not a binding's app: the journal and this renderer are the
+    # language's. A binding that keeps its configuration in one namespace names
+    # it with `config :fsl, :log_sequence_app, :my_app` instead.
+    Application.put_env(:fsl, :log_sequence, true)
 
     try do
       # Runs synchronously in this (test) process, so the file pid is self().
       assert SeqScenario.run(false) == :ok
     after
-      Application.delete_env(:elixip2, :log_sequence)
+      Application.delete_env(:fsl, :log_sequence)
     end
 
     assert File.exists?(path)
@@ -237,6 +240,57 @@ defmodule FSL.DiagramTest do
         )
 
       assert note =~ "note over local : lookup_subscriber"
+    end
+  end
+
+  describe "which app the :log_sequence flag lives under" do
+    # A binding usually configures everything in one namespace of its own, so
+    # the flag is read under `:fsl` AND under whatever app the binding named.
+    # Elixip's `elixipp --log-sequence` sets `:fsl`; a binding that would rather
+    # keep it with the rest of its configuration says so once.
+    setup do
+      on_exit(fn ->
+        Application.delete_env(:fsl, :log_sequence)
+        Application.delete_env(:fsl, :log_sequence_app)
+        Application.delete_env(:some_binding, :log_sequence)
+        FSL.Journal.clear()
+      end)
+    end
+
+    defmodule Quiet do
+      use FSL.Machine
+
+      state initial_state do
+        send(appdata_get(:probe), {:journal, FSL.Journal.enabled?()})
+        scenario_success("done")
+      end
+    end
+
+    defp journal_on?() do
+      test_pid = self()
+      spawn(fn -> FSL.Runner.run_instance(Quiet, appdata: %{probe: test_pid}) end)
+      assert_receive {:journal, on?}, 2_000
+      on?
+    end
+
+    test "off by default" do
+      refute journal_on?()
+    end
+
+    test "on when :fsl says so" do
+      Application.put_env(:fsl, :log_sequence, true)
+      assert journal_on?()
+    end
+
+    test "on when the app the binding named says so" do
+      Application.put_env(:fsl, :log_sequence_app, :some_binding)
+      Application.put_env(:some_binding, :log_sequence, true)
+      assert journal_on?()
+    end
+
+    test "off when the named app says nothing, whatever else is configured" do
+      Application.put_env(:fsl, :log_sequence_app, :some_binding)
+      refute journal_on?()
     end
   end
 end

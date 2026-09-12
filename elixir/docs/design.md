@@ -646,8 +646,19 @@ A per-instance chronological journal (commands, transitions, outcome) kept in th
 runner, the macros and the reporting all run. It is therefore isolated per run
 with no registry and no message passing.
 
-`FSL.Diagram.PlantUML` renders it at `finalize` time, and a binding may name its
-own renderer with `c:FSL.Host.diagram_renderer/0`.
+Two renderers ship behind the `FSL.Diagram` behaviour — `render/2` and
+`filename/1` — and a binding names the one it wants with
+`c:FSL.Host.diagram_renderer/0`:
+
+| | |
+|---|---|
+| `FSL.Diagram.PlantUML` | the default. Colours the media lane, tints a terminal note green or pink |
+| `FSL.Diagram.Mermaid` | what the TypeScript sibling emits, and what GitHub renders in place with no toolchain. No per-arrow colour in the grammar, so media is dotted and on its own lane rather than orange — a weaker signal, and the honest trade against inventing a `rect` block that would colour a region instead of a message |
+
+The journal is turned on by `config :fsl, :log_sequence, true`, or by the
+binding's own app when it named one with `config :fsl, :log_sequence_app,
+:my_app` — a binding usually keeps all of its configuration in one namespace and
+should not have to split one flag out of it.
 
 **Three lanes, and the rule is by exclusion:**
 

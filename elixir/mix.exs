@@ -73,7 +73,13 @@ defmodule FSL.MixProject do
         "The language": [FSL.Machine, FSL.Block, FSL.Context],
         "The engine": [FSL.Runner, FSL.Loader, FSL.Child],
         "The embedding": [FSL.Host, FSL.Host.Default],
-        Instrumentation: [FSL.Monitor, FSL.Journal, FSL.Diagram.PlantUML],
+        Instrumentation: [
+          FSL.Monitor,
+          FSL.Journal,
+          FSL.Diagram,
+          FSL.Diagram.PlantUML,
+          FSL.Diagram.Mermaid
+        ],
         Utilities: [FSL.Valet, FSL.HTTP]
       ]
     ]

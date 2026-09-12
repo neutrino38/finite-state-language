@@ -257,11 +257,16 @@ defmodule FSL.Runner do
   # the CLI (Application env) or when the scenario enabled its debug flag. No-op
   # otherwise — the journal recording helpers are then free.
   defp maybe_start_sequence_journal(module, ctx) do
-    # `debug` is a field of the SIP context, not of FSL's: a machine whose
-    # binding does not define one simply never turns the journal on this way.
-    # Read tolerantly rather than through a seam of its own — the journal's
-    # switch is a question for the journal seam (§4.8), not for this one.
-    if Application.get_env(:elixip2, :log_sequence, false) or Map.get(ctx, :debug, false) do
+    # Two switches:
+    #
+    #   * `:log_sequence` — what a CLI sets for a whole run. Read under `:fsl`,
+    #     and under whatever app a binding named with `:log_sequence_app`,
+    #     because a binding usually configures everything in one namespace of
+    #     its own and should not have to split one flag out of it;
+    #   * `debug`, a field a binding's context may define (SIP's does) and FSL's
+    #     does not. Read tolerantly: a machine whose binding has no such field
+    #     simply never turns the journal on that way.
+    if journal_enabled?() or Map.get(ctx, :debug, false) do
       FSL.Journal.start(%{
         scenario: scenario_label(module),
         pid: inspect(self()),
@@ -270,6 +275,20 @@ defmodule FSL.Runner do
     end
 
     :ok
+  end
+
+  # `:log_sequence` under `:fsl`, or under whichever app a binding named:
+  #
+  #     config :fsl, :log_sequence_app, :my_app
+  #
+  # One flag, two places to look, so a binding that keeps all of its
+  # configuration under its own app can keep this one there too.
+  defp journal_enabled? do
+    Application.get_env(:fsl, :log_sequence, false) or
+      case Application.get_env(:fsl, :log_sequence_app) do
+        nil -> false
+        app when is_atom(app) -> Application.get_env(app, :log_sequence, false)
+      end
   end
 
   # ── Context bootstrap ─────────────────────────────────────────────────────
