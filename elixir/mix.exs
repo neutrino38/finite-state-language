@@ -1,7 +1,14 @@
 defmodule FSL.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  # 0.2.0 and not 0.1.0, deliberately: the TypeScript sibling is at 0.2.0, and
+  # what the two now share is the *contract* — the SBB return shape, the
+  # vocabulary declared and refused, the block-level bound, `resume:`, the
+  # inter-machine event names — reconciled clause by clause in
+  # ../spec/fsl-js-ts.md §12. Two numbers for one language would tell a reader
+  # that one half is a release behind, which is the thing this repository exists
+  # to deny. Nothing was published as 0.1.x, so the jump costs nothing.
+  @version "0.2.0"
   @source_url "https://github.com/neutrino38/finite-state-language"
 
   def project do

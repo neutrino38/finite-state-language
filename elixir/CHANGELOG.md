@@ -10,7 +10,16 @@ means for the field names: `lasterr`, `errorreason`, `currentstate` and
 struct field takes no deprecated alias — so renaming one is a **major** version
 with a migration, never a tidying.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-12
+
+The first release of this package, numbered to match the TypeScript sibling
+rather than to count this package's own releases. What the two share is the
+*contract*, reconciled clause by clause in
+[`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md) §12 — the SBB return shape, the
+declared vocabulary, the block-level bound, `resume:`, the inter-machine event
+names. Two numbers for one language would tell a reader that one half is a
+release behind, which is the thing this repository exists to deny; and nothing
+was ever published as 0.1.x, so the jump costs nobody anything.
 
 ### Added — the first release
 
@@ -108,9 +117,18 @@ binding meets exactly these:
 ### Not yet
 
 - not published to hex;
-- the cross-language spec (`../spec/fsl-js-ts.md`) is reconciled clause by clause
+- the cross-language spec (the cross-language spec) is reconciled clause by clause
   but the pending-queue difference and a few `stay` / `goto back` semantics are
   recorded there as deliberate divergences rather than resolved;
-- ~91 of Elixip's FSL tests are still in Elixip, where they are the proof that
-  the host wiring works; a further ~20 would have to be split rather than moved;
 - `mix hex.publish`.
+
+The tests that stayed in Elixip stayed on purpose: ~91 of them are the proof
+that the *host wiring* works — the external config, the account column, the
+call-shape columns, the media failure domain, the UAS and B2BUA suites, the
+reference scenarios — and four files were **split** rather than moved, each
+keeping the half that needs a protocol: `spawn_fsm_test` (what a `:uas_invite`
+child needs), `scenario_loader_test` (the built-ins and the `:uac` default),
+`fsl_compile_error_location_test` (that a facade's extra layer of expansion does
+not lose the author's file and line). `scenario_resilience_test` moved whole:
+its exit source was already a dead pid and a plain `GenServer.call`, which is
+what a binding's verb is underneath.

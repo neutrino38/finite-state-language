@@ -1,0 +1,11 @@
+' Scenario      : FSL.DiagramTest.Quiet
+' Instance pid  : #PID<0.660.0>
+' Configuration (passwords masked):
+'
+@startuml
+participant local
+participant peer
+
+note over local : initial_state
+note over local #LightGreen : succeeded: done
+@enduml

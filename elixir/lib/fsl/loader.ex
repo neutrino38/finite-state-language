@@ -36,16 +36,23 @@ defmodule FSL.Loader do
   end
 
   @doc """
-  Return the scenario kind declared by `module`: `:uac` (default, client
-  scenario), `:uas_register` (REGISTER server), etc. Used by `elixipp` to pick
-  between the outbound client mode and the inbound server mode. Modules compiled
-  before the `uas` annotation existed (no `__scenario_type__/0`) default to `:uac`.
+  The **opaque** kind `module` declared, or `nil`.
+
+  FSL keeps the slot and has no opinion about what goes in it: the vocabulary is
+  the binding's — SIP writes `:uac`, `:uas_register`, `:uas_invite` from its own
+  `uas/1` macro — and so is the reading of a machine that declared nothing. SIP
+  reads `nil` as `:uac`, in `SIP.Scenario.Loader`, because a default role is a
+  statement about a protocol.
+
+  `nil` for a module that has no `__scenario_type__/0` at all, which is both a
+  module that is not a machine and one compiled before its binding grew an
+  annotation.
   """
-  @spec scenario_type(module()) :: atom()
+  @spec scenario_type(module()) :: term() | nil
   def scenario_type(module) do
     if Code.ensure_loaded?(module) and function_exported?(module, :__scenario_type__, 0),
       do: module.__scenario_type__(),
-      else: :uac
+      else: nil
   end
 
   # A service building block is FSL too — same states, same on_events — so the
