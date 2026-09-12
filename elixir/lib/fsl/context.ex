@@ -1,36 +1,43 @@
 defmodule FSL.Context do
   @moduledoc """
-  The state a finite state machine keeps about itself, and the generic macros a
-  state body reads and writes it with.
+  The state a machine keeps about itself, and the macros a state body reads and
+  writes it with.
 
-  A protocol binding does not hand FSL a context: it **extends** FSL's. These six
-  fields are the FSM's own bookkeeping, and it is the protocol's fields — a
-  dialog pid, a media server handle, an asserted identity — that are the guests.
-  So a binding's context module builds its struct from `fields/0` and adds its
-  own:
+  Every machine has a context. `%FSL.Context{}` is the one a machine gets when
+  the application supplies none, and it holds six fields the engine needs.
 
-      defmodule SIP.Context do
-        defstruct FSL.Context.fields() ++
-                    [username: nil, domain: nil, dialogpid: nil, ...]
+  ## Extending it
+
+  An application does not hand FSL a context of its own: it **extends** FSL's.
+  Build the struct from `fields/0` and add whatever a session of the application
+  holds:
+
+      defmodule MyApp.Context do
+        @after_compile FSL.Context
+        defstruct FSL.Context.fields() ++ [endpoint: nil, connection: nil, user: nil]
       end
 
-  and a scenario written for that binding gets the generic macros by `use`-ing
-  this module under the name its own context variable goes by:
+  `@after_compile FSL.Context` turns a `defstruct` that forgot `fields/0` into a
+  compile error rather than a crash on the first transition.
 
-      use FSL.Context, ctx_var: :sip_ctx
+  The six fields are the machine's own bookkeeping; the application's are the
+  guests. That is the direction, and it is worth stating because the file layout
+  suggests the opposite: a machine keeps state about *itself* whether or not
+  there is an application around it, and nothing the application adds is
+  anything FSL reads.
 
-  ## The six fields, and which way the dependency points
+  ## The six fields
 
   | Field | Written by | Read by |
   |---|---|---|
-  | `lasterr` | a binding's verbs | every transition macro |
+  | `lasterr` | the application's verbs | every transition macro |
   | `errorreason` | `scenario_failure/1` | `cleanup/1`, the host |
-  | `currentstate` | the runner, on entering a state | the scenario, the host |
+  | `currentstate` | the runner, on entering a state | the machine, the host |
   | `laststate` | the runner, only on a real state change | `goto back` |
   | `parent_pid` | `spawn_fsm`, `run_instance/2` | the parent notifications |
   | `appdata` | `appdata_set`, the sub-FSM and SBB bookkeeping | everything |
 
-  `lasterr` is the one field a binding writes and FSL reads — the channel that
+  `lasterr` is the one field an application writes and FSL reads — the channel that
   lets a verb report an error and a scenario stay readable without an `if` after
   every call. The other five are FSL's alone.
 
@@ -44,12 +51,14 @@ defmodule FSL.Context do
   adopts the names it inherits. Changing them is a major version with a
   migration, never a side effect of moving files.
 
-  ## `put/3` and not the binding's own setter
+  ## Writing them
 
-  FSL writes these fields with `put/3`, deliberately not through a binding's
-  setter (`SIP.Context.set/3`), which validates protocol properties FSL has no
-  business knowing about. The guards here are the FSM's own invariants and
-  nothing else.
+  FSL writes these fields with `put/3`, and deliberately not through an
+  application's own setter, which would validate properties FSL has no business
+  knowing about. The guards in `put/3` are the machine's own invariants and
+  nothing else: a state name is an atom, a failure reason is a string, a parent
+  is a pid or `nil`, and `lasterr` takes any term because it carries whatever a
+  verb failed with.
   """
 
   @fields [
@@ -135,7 +144,7 @@ defmodule FSL.Context do
 
   @doc """
   Assert at compile time that `module`'s struct carries the six fields with the
-  right defaults. A binding writes `@after_compile FSL.Context` in its context
+  right defaults. An application writes `@after_compile FSL.Context` in its context
   module, so a `defstruct` that forgot `FSL.Context.fields()` is a compile error
   rather than a crash on the first transition.
   """
@@ -172,21 +181,23 @@ defmodule FSL.Context do
 
   ## Options
 
-    * `:ctx_var` — the name the context variable goes by in this binding's
-      scenarios (`:sip_ctx` for SIP, `:fsl_ctx` by default). A scenario reads
-      `sip_ctx` because it is holding a SIP session; an XMPP one would read
-      `xmpp_ctx`. What the extraction removed is not the name but the assumption
-      that there is only one.
+    * `:ctx_var` — what a machine of this application calls the context
+      variable. `:fsl_ctx` by default.
 
-    * `:setter` / `:getter` — `{module, function}` a write and a read go
-      through, defaulting to `{FSL.Context, :put}` and `{FSL.Context, :get}`.
-      A binding names its own, because these two accessors carry more than the
-      six: `ctx_set(:username, …)` must keep whatever `SIP.Context.set/3`
-      validates about a username, and `ctx_get(:domain)` must keep answering.
-      FSL's own pair is restricted to the six on purpose, so a machine with no
-      binding cannot write a field nobody defined.
+      A name worth choosing: a machine holding a chat session reads better with
+      `chat_ctx` than with `fsl_ctx`, and the SIP embedding uses `sip_ctx`. What
+      FSL does not assume is that there is only **one** such name, which is what
+      lets two applications' machines run in one VM.
 
-  Injected once per module: a scenario reaching this through two `use` lines
+    * `:setter` / `:getter` — `{module, function}` that `ctx_set` and `ctx_get`
+      go through. `{FSL.Context, :put}` and `{FSL.Context, :get}` by default.
+
+      Name your own when your context has fields of its own to validate:
+      `ctx_set(:endpoint, …)` should go through whatever checks an endpoint,
+      and FSL's own pair is restricted to the six fields on purpose, so that a
+      machine with no application around it cannot write a field nobody defined.
+
+  Injected once per module: a machine reaching this through two `use` lines
   would otherwise redefine the macros and warn on every clause.
 
   The macros are one-liners over the `*_ast/3` builders below rather than

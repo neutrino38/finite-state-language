@@ -48,7 +48,7 @@ defmodule FSL.Diagram do
   The list is deliberately over-broad and keeps the SIP spellings it was born
   with (`:passwd`, `:password`, `:ha1`, `:ha1b`): a key no binding uses costs
   nothing to mask, and a key that slips through costs a password written to
-  disk. A binding whose secrets go by other names should render its own document
+  disk. An application whose secrets go by other names should render its own document
   rather than hope.
   """
   @spec mask(atom(), term()) :: String.t()

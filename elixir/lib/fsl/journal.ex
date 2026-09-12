@@ -1,16 +1,35 @@
 defmodule FSL.Journal do
   @moduledoc """
-  Per-process, in-memory journal of a scenario instance's run: the commands it
-  sent (`send_INVITE`, `media_play`, …), the state transitions it went through and
-  its terminal outcome. Used to render a PlantUML sequence diagram when
-  `--log-sequence` is set on the `elixipp` CLI, or when the scenario enables its
-  debug flag (`ctx_set(:debug, true)`).
+  Records one run, so that it can be drawn afterwards.
 
-  The journal lives in the **process dictionary of the scenario instance process**
-  — the same process where `FSL.Runner.run_instance/1`, the `send_*`
-  macros (`FSL.Monitor.note_command/2`) and the runner `report/5` all
-  run. It is therefore naturally isolated per call and adds zero overhead when
-  disabled (every recording helper is a no-op when no journal has been started).
+  A journal holds, in order: every command the machine issued, every state it
+  moved through, and how it ended. `FSL.Runner` flushes it through a renderer
+  (`FSL.Diagram`) when the run finishes, which produces a sequence diagram of
+  that particular run.
+
+  ## Turning it on
+
+  Off by default, and inert when off: every recording helper returns immediately
+  if no journal has been started, so a production run pays nothing.
+
+      config :fsl, :log_sequence, true
+
+  An application that keeps its settings in one namespace of its own names it
+  instead, and the flag is read there:
+
+      config :fsl, :log_sequence_app, :my_app
+      config :my_app, :log_sequence, true
+
+  A single machine can also turn it on for itself, if its embedding's context has
+  a `debug` field.
+
+  ## Where it lives
+
+  In the **process dictionary of the machine's own process** — the same process
+  that runs the states, issues the commands and reports the transitions. Two
+  consequences follow, and both are the reason for the choice: a journal is
+  isolated per run without a registry or any message passing, and it disappears
+  with the process that owns it.
   """
   require Logger
 

@@ -3,8 +3,8 @@ defmodule FSL.Runner do
   Execution engine for `FSL.Machine` finite state machines.
 
   A scenario module (one that does `use FSL.Machine`) compiles each `state`
-  block into a function `__state_<name>/1` that takes the context (a
-  `%SIP.Context{}` for a SIP scenario — see `FSL.Context`) and
+  block into a function `__state_<name>/1` that takes the context (`FSL.Context`,
+  or whatever struct the application extended it into) and
   returns a *transition descriptor*:
 
     * `{:goto, target, desc, ctx}`     — move to another state
@@ -24,7 +24,7 @@ defmodule FSL.Runner do
     * `c:FSL.Host.bootstrap/0` — start whatever the binding needs (idempotent).
       Called once, through `run/2` with `start_stack = true`.
     * `run_instance/1` — run a single scenario instance in the **calling
-      process** (the dialog layer binds SIP/media events to `self()`, so the
+      process** (an application typically binds its own events to `self()`, so the
       whole FSM must run where `run_instance/1` is called).
     * `run/2` — convenience used by the generated `run/1`: optionally bootstrap
       the stack, then run one instance.
@@ -32,12 +32,14 @@ defmodule FSL.Runner do
   require Logger
 
   @doc """
-  Run a single scenario instance, optionally starting the SIP stack first.
+  Run one instance of `module`, optionally bootstrapping its host first.
 
-  `start_stack = true` is the one-shot mode used by `mix scenario` / `elixipp`.
-  `start_stack = false` assumes the stack is already up (started once via
-  `c:FSL.Host.bootstrap/0`) and is the basis for running many instances in
-  parallel later on.
+  `true` is the one-shot mode a CLI or a mix task uses: bootstrap whatever the
+  application needs (`c:FSL.Host.bootstrap/0`), then run. `false` assumes that
+  has already happened, which is what lets many instances run in parallel over
+  one set of resources.
+
+  Returns `:ok`, `{:error, reason}` or `{:aborted, reason}`.
   """
   @spec run(module(), boolean()) :: :ok | {:error, term()}
   def run(module, true) do

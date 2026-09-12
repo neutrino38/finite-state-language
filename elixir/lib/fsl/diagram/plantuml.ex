@@ -1,20 +1,20 @@
 defmodule FSL.Diagram.PlantUML do
   @moduledoc """
-  Pure renderer turning a `FSL.Journal` event list plus metadata
-  into a [PlantUML](https://plantuml.com/sequence-diagram) sequence diagram.
+  Renders a run recorded by `FSL.Journal` as a
+  [PlantUML](https://plantuml.com/sequence-diagram) sequence diagram. The
+  default renderer; `FSL.Diagram.Mermaid` is the alternative, and an application
+  chooses with `c:FSL.Host.diagram_renderer/0`.
 
-  It has **no dependency on the SIP stack**, so it is fully unit-testable in
-  isolation. The fidelity is deliberately reduced (v1): the diagram is built from
-  the instrumentation already available — outbound command names (`send_INVITE` →
-  an `INVITE` arrow), state transitions (rendered as notes) and the free-text
-  description carried by each transition. A transition carrying a protocol event
-  and a non-empty description is rendered as an inbound arrow (the description is
-  the message the scenario author labelled it with, e.g. `"200 OK"`).
+  A diagram is built from what the instrumentation already collected, which
+  bounds how detailed it can be: command names become outgoing arrows, state
+  transitions become notes, and a transition caused by an event becomes an
+  incoming arrow labelled with the description the machine's author gave it —
+  `goto talking, "200 OK"` draws an arrow labelled `200 OK`.
 
   ## Three lanes, and which one an event is drawn on
 
-  The rule is **by exclusion**, which is what lets this renderer serve a binding
-  it has never heard of (extraction plan §4.8):
+  The rule is **by exclusion**, which is what lets this renderer serve an
+  application it has never heard of:
 
   | Event / command type | Lane |
   |---|---|
@@ -22,14 +22,14 @@ defmodule FSL.Diagram.PlantUML do
   | `:scenario`, `:control`, `:timer`, `:http`, `:db`, `nil` | a note over the local lane |
   | **anything else** — `:sip`, `:matrix`, `:xmpp`, … | the peer |
 
-  Written the other way round — matching `:sip` for the peer — a binding
-  emitting `:matrix` would fall through to the self-note and produce a worse
-  diagram for no reason. By exclusion it reproduces today's rendering exactly
+  Written the other way round — naming the types that go to the peer — an
+  application emitting a type this renderer predates would fall through to the
+  self-note and get a worse diagram for no reason. By exclusion it reproduces today's rendering exactly
   for every type Elixip emits, and does something sensible for one it has never
   seen.
 
-  What is left of SIP vocabulary here is naming convention that generalizes for
-  free: `send_INVITE → INVITE` and `media_play → play` are prefix rules over
+  What looks like protocol vocabulary in the rules below is naming convention,
+  and generalises for free: `send_INVITE → INVITE` and `media_play → play` are prefix rules over
   *command names*, and they read `send_message → MESSAGE` just as well.
   """
 

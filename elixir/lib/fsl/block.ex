@@ -1,14 +1,19 @@
 defmodule FSL.Block do
   @moduledoc """
-  Declare a **service building block**: a reusable fragment of a flow, written in
-  FSL, that a machine enters with `sbb_fsm/2` and that talks back through
-  service-level events.
+  Declares a **service building block**: a reusable fragment of a flow, written
+  in FSL, that other machines call.
 
-  A block is the **subroutine** of the language: a machine calls it from a state,
-  it runs a machine of its own in the caller's process, and it hands control back
-  by posting one event. `sbb_fsm/2` and everything below is FSL's — nothing here
-  knows a protocol — while a binding wraps it in a facade the way `SIP.SBB`
-  wraps it, so a SIP block gets the SIP verbs along with the mechanism.
+  A block is the **subroutine** of the language. A machine enters one from a
+  state; the block then runs a machine of its own, in the caller's process, until
+  it hands control back by returning one event. Use it for a sequence that
+  several machines need and none of them should have to get right twice —
+  establishing a call, running a menu, collecting credentials.
+
+  Contrast with `spawn_fsm`, which starts a second machine in a process of its
+  own: a block has no concurrency and no mailbox of its own, and the caller is
+  suspended at the call site until it returns.
+
+  ## Writing one
 
       defmodule MyApp.Confirming do
         use FSL.Block
@@ -35,18 +40,51 @@ defmodule FSL.Block do
         end
       end
 
+  ## Calling one
+
+  `sbb_fsm/2` enters the block; the event it returns is matched in the
+  `on_events` that follows, like any other event:
+
+      state asking_the_user do
+        sbb_fsm MyApp.Confirming, prompt: "Delete everything?"
+
+        on_events do
+          {:confirm, :accepted, _data} ->
+            goto deleting, "confirmed"
+
+          {:confirm, :declined, %{reason: why}} ->
+            goto cancelled, "declined: \#{why}"
+
+          # Bounded blocks add `:timeout` to their vocabulary, so this arm always
+          # exists and the caller needs no `after` clause of its own.
+          {:confirm, :timeout, _data} ->
+            goto cancelled, "no answer"
+        end
+      end
+
+  Two rules the compiler enforces at the call site:
+
+    * **`sbb_fsm` belongs in a state body, not in an `on_events` clause.** A
+      clause's deadline is absolute, so a block called from one would spend the
+      caller's remaining time while it ran;
+    * **an outcome the block did not declare is a compile error**, so a typo
+      cannot become a caller waiting on a deadline for an event nobody will send.
+
+  Keys declared in `@sbb_args` are written plainly at the call site, as above;
+  `args: %{prompt: "…"}` is the same thing spelled as a map. A key the block does
+  not declare raises rather than becoming a sandbox entry nobody reads.
+
   ## What a block returns
 
   Every block returns **`{namespace, outcome, data}`** — the namespace it
   declares, an outcome atom, and a map. The shape is fixed so that a block can
   learn to report one more thing without breaking a host that matches it: a new
   key in `data` is invisible to whoever does not read it, where a fifth tuple
-  element would be a compile error in every scenario (S13).
+  element would be a compile error in every caller.
 
-  `@sbb_returns` is the vocabulary itself, and it is not decoration:
-  `sbb_return/1` refuses an outcome that is not declared, at compile time, so a
-  typo cannot become a host waiting silently on its `after` for an event that
-  will never be sent. It defaults to the block's last name segment, downcased.
+  `@sbb_returns` declares that vocabulary, and it is enforced rather than
+  documentary: `sbb_return/1` refuses an outcome that is not in it, at compile
+  time. `@sbb_namespace` defaults to the block's last name segment, underscored.
 
   When the block is bounded (the default), `:timeout` is added to the vocabulary
   for free and `{namespace, :timeout, %{block: module}}` is what the host
@@ -77,7 +115,7 @@ defmodule FSL.Block do
   Terminals written inside a block (`scenario_failure`, `scenario_aborted`) keep
   their ordinary meaning and tear the host down too.
 
-  `:ctx_var` and `:host` are passed through to `FSL.Machine`, so a binding's
+  `:ctx_var` and `:host` are passed through to `FSL.Machine`, so an application's
   facade declares them once for its blocks as it does for its machines.
 
   ## `cleanup/1` — a block releases what it reserved, on every way out

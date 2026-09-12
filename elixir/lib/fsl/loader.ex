@@ -1,12 +1,39 @@
 defmodule FSL.Loader do
   @moduledoc """
-  Locate and load scenario modules, for the `mix scenario` task and the
-  `elixipp` escript.
+  Finds the machine a caller asked for, by module name or by file path.
+
+  A tool that runs machines — a mix task, a CLI, a server loading scripts from a
+  directory — needs to turn what a user typed into a module it can run. There are
+  two ways to have a machine, and this module covers both:
+
+    * **compiled into the application**, and named. `load_module!/1` resolves
+      `"Fishing.Trip"` to `Fishing.Trip`;
+    * **written in an `.exs` file**, loaded at run time. `load_file!/1` compiles
+      the file and returns the machine it defines.
+
+  The second is why FSL is careful about names: a file compiled at run time gives
+  no compiler the chance to catch a rename, so a machine that has been deployed
+  keeps working only if the names it uses still exist.
+
+  ## What counts as a machine
+
+  A module that exports `run/1` and `__scenario_states__/0`, which is what
+  `use FSL.Machine` generates — and that is **not** a service building block,
+  which `use FSL.Block` marks. A file may define both; `load_file!/1` returns the
+  machine even when a block is declared above it.
+
+  ## Example
+
+      iex> FSL.Loader.load_file!("samples/fishing.exs")
+      Fishing.Trip
   """
 
   @doc """
-  Compile a scenario `.exs` file and return the scenario module it defines
-  (the one created by `use FSL.Machine`). Raises if none is found.
+  Compile an `.exs` file and return the machine it defines.
+
+  Raises if the file defines no machine. When it defines several, the first is
+  returned; when it defines a service building block as well, the block is
+  skipped whatever the order.
   """
   @spec load_file!(Path.t()) :: module()
   def load_file!(path) do
@@ -21,8 +48,12 @@ defmodule FSL.Loader do
   end
 
   @doc """
-  Resolve a scenario module from its name (e.g. `"UAC.Invite"`), assuming it is
-  already compiled / bundled. Raises if it is not a scenario module.
+  Resolve an already-compiled machine from its name.
+
+      FSL.Loader.load_module!("Fishing.Trip")
+
+  Raises if no module answers to that name, and again if the module that does is
+  not a machine.
   """
   @spec load_module!(String.t()) :: module()
   def load_module!(name) do
@@ -36,17 +67,28 @@ defmodule FSL.Loader do
   end
 
   @doc """
-  The **opaque** kind `module` declared, or `nil`.
+  The kind this machine declared, or `nil`.
 
-  FSL keeps the slot and has no opinion about what goes in it: the vocabulary is
-  the binding's — SIP writes `:uac`, `:uas_register`, `:uas_invite` from its own
-  `uas/1` macro — and so is the reading of a machine that declared nothing. SIP
-  reads `nil` as `:uac`, in `SIP.Scenario.Loader`, because a default role is a
-  statement about a protocol.
+  FSL provides the slot and attaches no meaning to it. What may go in it, and
+  what an absent value means, belong to the application: a tool that runs
+  machines uses this to decide how to run one — whether it needs a listening
+  port, say, or which factory should create it.
 
-  `nil` for a module that has no `__scenario_type__/0` at all, which is both a
-  module that is not a machine and one compiled before its binding grew an
-  annotation.
+  A machine writes the slot through an annotation its own embedding supplies:
+
+      defmodule Fishing.Competition do
+        use FSL.Machine, host: Fishing.Host
+        @scenario_type :timed
+        # …
+      end
+
+  Returns `nil` for a machine that declared nothing, and for any module that is
+  not a machine. An application that wants a default applies it on its own side,
+  where it means something.
+
+  In the SIP embedding, `uas :register` writes `:uas_register` and the tool reads
+  it to decide between running a client scenario and listening for inbound
+  traffic; a scenario that declared nothing is read as a client.
   """
   @spec scenario_type(module()) :: term() | nil
   def scenario_type(module) do
@@ -59,8 +101,8 @@ defmodule FSL.Loader do
   # `__scenario_states__/0` half matches one. It is excluded on `__sbb__/0`
   # rather than only on the absence of `run/1`: a block does not define run/1,
   # which already makes this impossible, but `load_file!/1` takes the FIRST
-  # match in a file, so a block declared above the scenario would be run AS the
-  # scenario if that ever changed. Two guards for one trap, deliberately.
+  # match in a file, so a block declared above the machine would be run AS the
+  # machine if that ever changed. Two guards for one trap, deliberately.
   defp scenario_module?(module) do
     Code.ensure_loaded?(module) and
       not function_exported?(module, :__sbb__, 0) and

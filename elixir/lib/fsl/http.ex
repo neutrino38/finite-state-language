@@ -1,20 +1,12 @@
-# HTTP client session layer for SIP scenarios.
-#
-# Part of the scenario helper family (same philosophy as the SIP.Session.*
-# mixins): a small FSL macro that operates on the implicit `sip_ctx` and never
-# blocks the scenario. See FSL.md ("SIP.Session.HTTP / http_GET") for the
-# scenario-side contract.
-
 defmodule FSL.HTTP do
   @moduledoc """
-  HTTP helpers mixin for SIP scenarios — issue outbound HTTP requests from a
-  scenario state without ever blocking the finite-state machine.
+  Issues HTTP requests from a machine, as events.
 
-  `use FSL.HTTP` brings in the `http_GET/3` FSL macro. Like the other
-  `SIP.Session.*` macros it operates on the implicit `sip_ctx`, sets
-  `sip_ctx.lasterr` to `:ok` and returns the updated context (so a `goto` placed
-  right after it works), but the HTTP *result* is delivered asynchronously, later,
-  as a single tagged message to the scenario mailbox:
+  A state must never block: an `await` or a blocking call would stop the machine
+  from handling anything else, including its own deadline. `use FSL.HTTP` brings
+  in `http_GET/3`, which sends the request and returns immediately, so a `goto`
+  placed right after it works. The **result arrives later**, as a single tagged
+  message the machine matches in `on_events`:
 
       { tag, {:ok, %Req.Response{}} }
       { tag, {:error, reason} }
@@ -25,7 +17,7 @@ defmodule FSL.HTTP do
     * a `Req` exception  — a network / transport error (`%Req.TransportError{}`, …);
     * `{:crash, reason}` — the worker process died before producing a result.
 
-  The scenario waits for this message in `on_events`:
+  ## Example
 
       state query_backend do
         http_GET("https://backend/api/x", 10_000, :provisioning)
@@ -41,15 +33,25 @@ defmodule FSL.HTTP do
         end
       end
 
-  Because `http_GET` guarantees a message even on timeout, the scenario does not
-  need an `after` clause for the timeout case — it arrives as an `{:error,
-  :timeout}` event. A wide safety `after` remains possible but is optional.
+  Because exactly one message always arrives — including on timeout — the
+  machine needs no `after` clause for the timeout case: it comes back as
+  `{:error, :timeout}` like any other outcome. A wider `after` remains possible
+  as a safety net, but is not required.
+
+  ## Requirements
+
+  `Req` is an optional dependency of this package. Add it to your own
+  dependencies to use this module:
+
+      {:req, "~> 0.5"}
+
+  The rest of FSL needs nothing beyond `Logger` and OTP.
 
   ## Timeout & cancellation — the coordinator pattern
 
-  `http_GET` never touches `receive` in the scenario process. It spawns a
-  disposable **coordinator** process which in turn `spawn_monitor`s a **worker**
-  that runs `Req.get/2`. The coordinator arbitrates time with a single
+  `http_GET` never calls `receive` in the machine's process. It spawns a
+  disposable **coordinator**, which in turn `spawn_monitor`s a **worker** that
+  runs `Req.get/2`. The coordinator arbitrates time with a single
   `receive`/`after`, so exactly one of three things happens:
 
     1. the worker returns in time → the coordinator forwards the result;
@@ -58,10 +60,10 @@ defmodule FSL.HTTP do
        `Process.exit(worker, :kill)`, so the request is genuinely cancelled and
        no late reply can ever be produced, then reports `{:error, :timeout}`.
 
-  The `receive`/`after` serializes the timer against the worker result, so there
-  is no race between them, and the coordinator sends **exactly one**
-  `{tag, …}` message before terminating — no stray late message can pollute
-  a subsequent `on_events`.
+  The `receive`/`after` serialises the timer against the worker's result, so
+  there is no race between them, and the coordinator sends **exactly one**
+  `{tag, …}` message before terminating. No late message can reach a subsequent
+  `on_events` and be mistaken for something else.
 
   > Killing the worker tears down the HTTP request in flight: the socket it had
   > checked out of the Finch/NimblePool pool is reclaimed when the process dies.

@@ -72,8 +72,8 @@ defmodule FSL.Machine do
     * `:host` — the `FSL.Host` implementation the language calls back into for
       everything it must not know. Defaults to `FSL.Host.Default`, which answers
       the least a machine needs.
-    * `:ctx_var` — the name this binding's machines call the context variable
-      (`:sip_ctx` for SIP). Defaults to `:fsl_ctx`.
+    * `:ctx_var` — what this application's machines call the context variable.
+      Defaults to `:fsl_ctx`; the SIP embedding uses `:sip_ctx`.
     * `:kind` — `:scenario` (the default) or `:sbb`, a service building block.
 
   ## Entry points
@@ -248,7 +248,7 @@ defmodule FSL.Machine do
         quote do
           @doc """
           Run one instance of this scenario. `start_stack?` is `true` to start the
-          SIP stack first (one-shot mode) or `false` to reuse an already-started
+          host first (one-shot mode) or `false` to reuse an already-bootstrapped
           stack. Returns `:ok` on success or `{:error, reason}` on failure.
           """
           @spec run(boolean()) :: :ok | {:aborted, term()} | {:error, term()}
@@ -264,10 +264,10 @@ defmodule FSL.Machine do
   @doc """
   Declare the parameters of the machine.
 
-  What a key means is the binding's business: `c:FSL.Host.build_context/1` turns
-  this list into the context. For SIP that is the identity — `:username`,
-  `:domain`, `:passwd` hashed into `:ha1` — with the global keys routed to the
-  application env and the rest kept in appdata.
+  What a key means is the application's business: `c:FSL.Host.build_context/1` turns
+  this list into the context, so what a key means is the application's to decide.
+  `FSL.Host.Default` puts every key in `appdata`; the SIP embedding routes some
+  to fields of its own context struct and some to the application environment.
   """
   defmacro config(opts) do
     quote do
@@ -338,11 +338,11 @@ defmodule FSL.Machine do
   short description of the triggering event, used for logging and shown in the
   monitor. `type` optionally categorizes that event (`:sip`, `:media`, `:timer`,
   `:http`, `:db`, …) — recorded by the monitor to drive the future sequence
-  diagram, mirroring the command typing of the binding's own verbs.
+  diagram, mirroring the command typing of the application's own verbs.
 
   When `type` is omitted and the `goto` runs inside a `on_events` clause, the
   type is inferred from the matched event (`:media` for `{:ms_event, …}`, `:sip`
-  for the other SIP tuples). An explicit `type` always wins.
+  for anything the host classifies). An explicit `type` always wins.
 
       goto call_answered, "200 OK", :sip
       goto start_play, "media connected", :media
@@ -419,7 +419,7 @@ defmodule FSL.Machine do
   Like Elixir's `receive`, but each clause records the *type* of the matched
   event so the trailing `goto` is automatically categorized (no need to pass the
   type explicitly). The type is inferred from the clause pattern: `{:ms_event,
-  …}` → `:media`, any other SIP tuple (`{100, …}`, `{:BYE, …}`, `{code, …}`) →
+  …}` → `:media`, any other tuple its host recognises (`{100, …}`, `{:BYE, …}`) →
   `:sip`.
 
       on_events do
@@ -672,7 +672,7 @@ defmodule FSL.Machine do
 
   @doc """
   Spawn another scenario as a *sub finite-state machine* (a separate process,
-  required because each FSM owns its own SIP/media mailbox). Hands the child our
+  required because each FSM owns its own mailbox). Hands the child our
   PID and a local name so the two can exchange messages with `notify/2` /
   `notify_parent/1`.
 
@@ -785,8 +785,8 @@ defmodule FSL.Machine do
   Called by a *face* module's `__using__` — a module that publishes a block's
   verb — because `on_events` cannot classify a block's return from a table: the
   namespace is the block author's word, and an unrecognised leading atom falls
-  through to the binding's fallback (for SIP, an arrow *from the peer*, and a
-  block's return came from nobody). `sbb_fsm/2` records it on its own.
+  through to the host's fallback for an unrecognised type — which a renderer
+  draws as an arrow from the peer, and a block's return came from nobody. `sbb_fsm/2` records it on its own.
   """
   @spec register_namespace(module(), atom()) :: :ok | nil
   # Read-modify-write on a plain attribute rather than `accumulate: true`,

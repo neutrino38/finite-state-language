@@ -1,73 +1,108 @@
 defmodule FSL.Monitor do
   @moduledoc """
-  In-memory registry of the scenario instances ("calls") currently running, used
-  by the `elixipp --monitor` live view.
+  A live registry of the machines currently running: one row each, updated as
+  they move.
 
-  One entry per call, keyed by the scenario slot id (an integer for a CLI slot,
-  `{parent_slot, name}` for a `spawn_fsm` child, the scenario process pid
-  otherwise). Each entry holds the scenario name, the last command sent (e.g.
-  `send_INVITE`), the current FSM state and the event that triggered the last
-  transition. A sub-FSM gets its own row, displayed right below its parent.
+  It exists so that a running system can be watched from outside — a terminal
+  table, a web view, a control command — without polling the machines
+  themselves or instrumenting them by hand. A row is created the first time a
+  machine reports, and recycled when its slot is cleared.
 
-  Both `FSL.Runner` (state transitions) and the `SIP.Session.*` send_*
-  macros (commands) report here, but **only when the monitor is started** — the
-  reporting helpers are a no-op otherwise, so there is zero overhead when
-  monitoring is off.
+  The registry is optional and **inert until started**. Every reporting helper
+  checks whether it is running and returns immediately if it is not, so a
+  production run that does not want it pays nothing.
 
-  Designed to hold several concurrent calls — today a single instance, tomorrow
-  the SIPP-like parallel mode.
+  ## A row
 
-  ## Whose columns are whose
+  | Column | Holds |
+  |---|---|
+  | `scenario` | the machine's module name |
+  | `state` | the state it is in now |
+  | `event` | what caused the last transition |
+  | `event_type` | that event's category, from `c:FSL.Host.event_type/1` |
+  | `command` | the last command the machine issued |
+  | `command_type` | that command's category |
+  | `account` | who the run is about, from `c:FSL.Host.account/2` |
+  | `slot` | the key the row is filed under |
+  | `depth` | 0 for a machine, 1 for a sub-FSM below its parent |
 
-  `scenario`, `state`, `event`, `event_type`, `command` and `command_type` are
-  the machine's: where it is and what moved it. So is `account` — "who this run
-  serves" is a generic column, even though only the embedding can say what goes
-  in it (`c:FSL.Host.account/2`). Everything else on a row belongs to the
-  **embedding**, which declares its columns and their defaults when it starts
-  the monitor:
+  Rows are keyed by **slot id**: an integer when a caller manages numbered slots,
+  `{parent_slot, name}` for a machine started with `spawn_fsm`, and the machine's
+  pid otherwise. Clearing a parent's slot clears its children's rows too.
 
-      FSL.Monitor.start(columns: SIP.FSL.Host.monitor_columns())
+  ## Columns an application adds
 
-  and writes one with `note/2`. The registry never learns which keys are which,
-  and the row **stays flat** — `row.medias`, not `row.extra.medias`. That is the
-  decision of the extraction plan (§4.7, §8.4) and it is not about tidiness: flat
-  rows are the only shape under which `ElixippCLI`, which declares its table by
-  plain key, and `Kelix.InstancePool`, which declares its key list the same way,
-  do not change when this module moves into a package.
+  The columns above are the machine's. An application that wants more declares
+  them, with their defaults, when it starts the registry:
 
-  A host's defaults travel with its columns, because they mean something:
-  `"n/a"` and `"none"` say "this call negotiated nothing", where a blank cell
-  would read as "nobody measured".
+      FSL.Monitor.start(columns: [medias: "n/a", server: "none"])
 
-  A pid can also `subscribe/1` to be told of changes as they happen instead of
-  polling `calls/0` — `{:fsl_monitor, {:updated, slot, row}}` after every
-  reported change, `{:fsl_monitor, {:cleared, slot}}` when a slot (and any
-  sub-FSM children) is cleared.
+  and writes them with `note/2`:
 
-  `subscribe/1` **returns the snapshot**, taken inside the call that registers
-  the subscriber, and the subscriber is **monitored** so a dead one is dropped
-  without an `unsubscribe/1`. Both matter for the same reason: subscribing is the
-  normal way to use this, so neither a lost first row nor a set that only grows
-  is acceptable. See `subscribe/1` for what each one prevents.
+      FSL.Monitor.note(:medias, "AV")
+
+  The registry never learns what those keys mean. Defaults are worth choosing:
+  `"n/a"` states that this run negotiated nothing, where an empty string reads as
+  "not measured yet".
+
+  A row is **flat** — `row.medias`, not `row.extra.medias`. Consumers declare the
+  columns they display by plain key, and a nested map would make every one of
+  them aware of which half a column came from.
+
+  ## Writing to it
+
+  `FSL.Runner` reports every transition. The verbs an embedding supplies report
+  their commands with `note_command/2`, which is what fills the `command` column;
+  `c:FSL.Host.account/2` supplies the `account` column on every report.
+
+  ## Reading it
+
+  `calls/0` returns every row, ordered so that a sub-FSM follows its parent.
+
+  For a live view, `subscribe/1` is better than polling: it returns the current
+  snapshot **and** registers the caller for `{:fsl_monitor, {:updated, slot,
+  row}}` on every change and `{:fsl_monitor, {:cleared, slot}}` when a slot is
+  recycled. Subscribers are monitored, so one that dies is dropped without an
+  `unsubscribe/1`. See `subscribe/1`.
+
+  ## Example: what this looks like in a SIP application
+
+  [Elixip](https://github.com/neutrino38/elixip) is one embedding of FSL, where a
+  machine is a SIP scenario and a run is a call. Its host declares three columns
+  of its own — the media the call negotiated, the media server it uses, and the
+  destination it dialled — and its session verbs report commands such as
+  `send_INVITE`. A `kelixip` server joins these rows with its own, and serves the
+  result over a control API so an operator sees, live, which call is in which
+  state and what moved it there.
   """
+
   use GenServer
 
-  @typedoc "Category of a command, to drive the future sequence diagram."
-  @type command_type :: :sip | :media | :http | :db | :scenario | :control | nil
+  @typedoc """
+  The category of a command or an event.
+
+  FSL sets `:scenario` and `:control` for its own vocabulary; every other value
+  comes from `c:FSL.Host.event_type/1` or from whatever an embedding passes to
+  `note_command/2`. The atoms below are the ones a SIP application uses, listed
+  as an illustration rather than as a closed set: any atom is valid, and
+  `FSL.Diagram` draws an unfamiliar one as coming from the peer.
+  """
+  @type command_type :: :sip | :media | :http | :db | :scenario | :control | atom() | nil
 
   @typedoc """
   One row: the machine's own columns, plus whatever the embedding declared.
   """
   @type call_info :: %{required(atom()) => term()}
 
-  # The machine's own columns. A host's are merged on top, from what it declared
-  # at start.
+  # The machine's own columns. An embedding's are merged on top, from what it
+  # declared at start.
   #
-  # `account` is on this list and the other three are not, which is the
-  # distinction the extraction plan draws (§4.7): "who this run serves" is a
-  # generic column whose *value* the binding supplies — through `c:account/2`,
-  # reported on every transition — while what a call negotiated, with which
-  # server, towards whom is the binding's question as well as its answer.
+  # `account` is on this list and an embedding's columns are not, and the line
+  # between them is which side asks the question. "Who is this run about" is a
+  # question every embedding has, so the column is generic even though only the
+  # embedding can answer it (`c:FSL.Host.account/2`). What a call negotiated,
+  # with which server, towards whom, is a question only a telephony application
+  # asks — so both the question and the answer are its own.
   @fsm_columns [
     scenario: "",
     account: "",
@@ -83,10 +118,17 @@ defmodule FSL.Monitor do
   # ── Public API ──────────────────────────────────────────────────────────────
 
   @doc """
-  Start the monitor **unlinked** (idempotent — reuses an already-running instance).
+  Start the registry **unlinked**, for a caller that decides at run time that it
+  wants one — a CLI given a `--monitor` flag, for instance. Idempotent: an
+  already-running registry is reused, and its columns are the ones declared by
+  whoever started it first.
 
-  This is elixipp's imperative bootstrap, called from the CLI once it knows
-  `--monitor` was asked for. A supervised owner wants `start_link/1` instead.
+  A supervised owner should use `start_link/1` instead.
+
+  ## Options
+
+    * `:columns` — the columns this application adds, as a keyword list of
+      `name: default`. See the moduledoc.
   """
   @spec start(keyword) :: {:ok, pid()}
   def start(opts \\ []) do
@@ -98,17 +140,23 @@ defmodule FSL.Monitor do
   end
 
   @doc """
-  Start the monitor under a supervisor — how the kelixip server runs it, so
-  `kelictl monitor` has FSM state to report (the `use GenServer` default
-  `child_spec/1` calls this).
+  Start the registry under a supervisor. Takes the same options as `start/1`.
+
+      children = [
+        {FSL.Monitor, columns: [medias: "n/a", server: "none"]},
+        # …
+      ]
   """
   @spec start_link(keyword) :: GenServer.on_start()
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @doc """
-  Upsert the state of a call. `call_id` is the scenario process pid. `event_type`
-  categorizes the triggering event (`:sip`, `:media`, `:timer`, …) — stored for
-  the future sequence diagram, mirroring `command_type`.
+  Record where a machine is now. Called by `FSL.Runner` on every transition; an
+  embedding does not normally call it.
+
+  `call_id` is the slot the row is filed under. An empty `username` leaves the
+  `account` column as it was, which is how a run that named itself once is not
+  overwritten by every later transition.
   """
   @spec report(pid(), String.t(), String.t(), String.t(), String.t(), command_type()) :: :ok
   def report(call_id, scenario, username, state, event, event_type \\ nil) do
@@ -133,20 +181,32 @@ defmodule FSL.Monitor do
   end
 
   @doc """
-  Update the account column of the current scenario row. Called when the
-  registered identity becomes known (e.g. after auth succeeds in a UAS
-  REGISTER scenario). No-op if the monitor is not running.
+  Set the `account` column of the current machine's row.
+
+  For a run that learns who it is about only once it is under way — after an
+  identity is verified, or once it knows which conversation it joined. Reported
+  values from `c:FSL.Host.account/2` will not overwrite it as long as that
+  callback answers `""` afterwards.
+
+  No-op if the registry is not running.
   """
   @spec note_account(String.t()) :: :ok
   def note_account(username), do: note(:account, to_string(username))
 
   @doc """
-  Record the last command issued by the current scenario process, with its
-  category (`:sip`, `:media`, `:http`, `:db`, …). Called by the instrumented
-  `SIP.Session.*` macros. The category is stored to drive the future sequence
-  diagram (knowing whether a command targets the SIP peer, the media server, …).
+  Record the last command the current machine issued, with its category.
 
-  No-op if the monitor is not running, so it stays free when `--monitor` is off.
+  This is what an embedding's verbs call, so that the `command` column shows what
+  the machine last *did* rather than only where it is:
+
+      def send_message(ctx, text) do
+        FSL.Monitor.note_command(:chat, "send_message")
+        # …
+      end
+
+  The category decides which lane the command is drawn on in a sequence diagram
+  (`FSL.Diagram`). It also feeds `FSL.Journal`, so a command is recorded whether
+  or not the registry is running.
   """
   @spec note_command(command_type(), String.t() | atom()) :: :ok
   def note_command(type, command) when is_atom(type) do
@@ -164,19 +224,22 @@ defmodule FSL.Monitor do
   end
 
   @doc """
-  Snapshot of all calls (one map per call), ordered by appearance.
+  Every row, ordered so that a sub-FSM follows its parent.
 
-  Each row carries its `:slot` — the key it was reported under — so a caller that
-  owns those slots can join this view with its own (kelixip keys them on the
-  instance id, see `Kelix.Control.monitor/0`). Renderers that build from named
-  columns simply ignore it.
+  Each row carries its `:slot`, the key it was filed under, so that a caller that
+  assigns those slots can join this view with records of its own — a server that
+  keys its instances by id, for instance. A renderer that displays named columns
+  ignores it.
   """
   @spec calls() :: [call_info()]
   def calls do
     GenServer.call(__MODULE__, :calls)
   end
 
-  @doc "Remove a slot entry so its row is recycled by the next call on that slot."
+  @doc """
+  Remove a row so its slot is reused by the next machine that reports under it.
+  Also removes the rows of any sub-FSMs filed beneath it.
+  """
   @spec clear(term()) :: :ok
   def clear(slot_id) do
     if Process.whereis(__MODULE__) do

@@ -510,7 +510,7 @@ defmodule FSL.Host.Default do
   Everything the `config` block carries goes into `appdata`.
 
   A machine with no protocol has no native properties to speak of, and guessing
-  which keys deserve a field of their own is the binding's job, not the
+  which keys deserve a field of their own is the application's job, not the
   language's.
   """
   @impl true
