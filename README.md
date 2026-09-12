@@ -113,7 +113,7 @@ function Phone() {
 Elixir — one machine per process, and a `mix.exs` line:
 
 ```elixir
-{:finite_state_language, "~> 0.2"}
+{:fsl, "~> 0.2", hex: :finite_state_language}
 ```
 
 See [`elixir/README.md`](elixir/README.md) and the runnable

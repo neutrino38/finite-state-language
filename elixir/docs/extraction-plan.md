@@ -965,9 +965,10 @@ on the BEAM, `stay` and `goto back` need their Elixir semantics stated, and the
 SBB return contract has to be checked against `fx.sbb` / `fx.sbbReturn`.
 
 Then `apps/elixip2/mix.exs` switches from `path:` to
-`{:finite_state_language, "~> 0.1"}` — the *package* name is what a dep line
-carries, while `:fsl` is the app the runtime starts and `FSL.*` what the code
-writes. Three names for one thing is the price of §8.2, and it is paid in
+`{:fsl, "~> 0.1", hex: :finite_state_language}` — a dep line has to carry both
+names once they differ: the atom is the app the runtime starts and against which
+mix resolves the build, `hex:` is the package it is fetched from, and `FSL.*` is
+what the code writes. Three names for one thing is the price of §8.2, and it is paid in
 exactly one line of one file.
 
 ### P5 — a generic live-push layer (optional, and only on evidence)

@@ -44,13 +44,17 @@ module that needs a client, and `Req` is declared `optional: true` for it.
 
 ```elixir
 def deps do
-  [{:finite_state_language, "~> 0.2"}]
+  [{:fsl, "~> 0.2", hex: :finite_state_language}]
 end
 ```
 
-Three names for one thing: `finite_state_language` is the hex package,
-`:fsl` is the OTP application, `FSL.*` is what the code writes. Documentation is
-on [hexdocs](https://hexdocs.pm/finite_state_language).
+Three names for one thing: `finite_state_language` is the hex package, `:fsl` is
+the OTP application, `FSL.*` is what the code writes. The dep line has to carry
+the first two precisely because they differ — the atom names the application
+mix builds and resolves, `hex:` names the package it is fetched from. Naming
+only the package would send mix looking for a `finite_state_language.app` that
+no build produces, and `mix deps.get` would fail on the first try. Documentation
+is on [hexdocs](https://hexdocs.pm/finite_state_language).
 
 ## Run something
 
