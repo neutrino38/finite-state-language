@@ -80,19 +80,49 @@ defmodule FSL.Block do
   `:ctx_var` and `:host` are passed through to `FSL.Machine`, so a binding's
   facade declares them once for its blocks as it does for its machines.
 
-  ## A block releases what it reserved, on every branch
+  ## `cleanup/1` — a block releases what it reserved, on every way out
 
-  There is **no per-block `cleanup`**. `cleanup/1` is called once, by the
-  runner's teardown, on the *machine's* module; `run_sbb/3` only pops the frame
-  and disarms the deadline. So a block that reserves something has to release it
-  before every `sbb_return` and on every terminal — and a branch that forgets
-  leaks with nothing in the log, which is the failure a per-block hook exists to
-  prevent.
+  A block may define `cleanup/1`. It runs on **every** exit from the block, not
+  only on the happy one:
 
-  The TypeScript dialect has that hook, and the cross-language spec records it
-  as a commitment this side owes rather than as a difference between the two
-  (`spec/fsl-js-ts.md` §12.4). Until it lands, a host cannot assume a block
-  cleaned up after itself.
+  | Leaving by | `cleanup/1` runs |
+  |---|---|
+  | `sbb_return/1` | yes |
+  | the block's own deadline | yes |
+  | a terminal written inside it (`scenario_failure`, `scenario_aborted`) | yes, then the terminal continues to the root |
+  | a cooperative shutdown reaching it | yes, then the wind-down continues into the host |
+  | an **enclosing** block's deadline passing through | yes — this block is abandoned too |
+
+  That last column is the point. A block is a subroutine of a machine that is
+  often dying: "the host is tearing down anyway" is not a reason to skip the
+  release, because the host's own `cleanup/1` does not know what a block took.
+  Without this, every branch of every block had to remember — and a branch that
+  forgot leaked with nothing in the log, which is exactly the silence this layer
+  exists to remove.
+
+  It runs **while the block is still on the reporting stack**, so a command it
+  issues is attributed to the block rather than to the host state control is
+  about to return to.
+
+  Unlike a machine's `cleanup/1`, whose return the runner discards, a block's is
+  **threaded**: what a block reserved lives in the *host's* context, so releasing
+  it means clearing it there.
+
+      def cleanup(ctx) do
+        case sbb_data_get_in(ctx, :handle) do
+          nil -> ctx
+          h -> release(h) && FSL.Context.appdata_set(ctx, :handle, nil)
+        end
+      end
+
+  A block that has nothing to hand back writes `:ok`; anything that is not a
+  context is ignored and the context passes through unchanged. And a `cleanup/1`
+  that raises is logged and swallowed: it runs on the failure path, so it must
+  not turn a clean return into an exception nor swallow a terminal on its way to
+  the root.
+
+  The hook is the one the TypeScript dialect had first; the cross-language spec
+  recorded it as a commitment this side owed (`spec/fsl-js-ts.md` §12.4).
 
   Design: `docs/design.md` §6.
   """

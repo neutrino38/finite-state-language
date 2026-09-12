@@ -27,7 +27,9 @@ The language:
   `scenario_aborted`, `spawn_fsm` / `notify` / `notify_parent` / `on_shutdown`;
 - `FSL.Block` — service building blocks: a subroutine of the language, entered
   with `sbb_fsm` and returning `{namespace, outcome, data}`, with the outcome
-  vocabulary checked at compile time and a completion bound per block;
+  vocabulary checked at compile time, a completion bound per block, and a
+  `cleanup/1` that runs on **every** way out — including an enclosing block's
+  deadline abandoning it, the exit no hand-written release could cover;
 - `FSL.Context` — the six fields a machine keeps about itself, the five generic
   context macros, and `@after_compile` so a binding that forgot them fails to
   compile;
@@ -99,6 +101,6 @@ binding meets exactly these:
   recorded there as deliberate divergences rather than resolved;
 - ~91 of Elixip's FSL tests are still in Elixip, where they are the proof that
   the host wiring works; a further ~20 would have to be split rather than moved;
-- **`FSL.Block` has no per-block `cleanup`.** A block must release what it
-  reserved before every `sbb_return` and on every terminal. The hook is settled
-  in the cross-language contract and owed by this side (spec §12.4).
+- `FSL.Diagram.Mermaid`: the TypeScript sibling ships `toMermaid()` and Mermaid
+  renders in GitHub with no toolchain, so the two dialects should converge on it.
+  PlantUML is what this release has.

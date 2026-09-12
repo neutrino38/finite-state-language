@@ -467,11 +467,30 @@ defmodule FSL.Runner do
 
     {event, ctx2} =
       try do
-        sbb_loop(module, :initial_state, entry_ctx, states, ref)
+        case sbb_loop(module, :initial_state, entry_ctx, states, ref) do
+          {event, ctx2} -> {event, run_sbb_cleanup(module, ctx2)}
+        end
       catch
         # Our own deadline fired. A deeper block lets the throw pass, so it is
         # always the right frame that answers.
-        {:sbb_deadline_hit, ^ref, ctx2} -> {module.__sbb_timeout_event__(), ctx2}
+        {:sbb_deadline_hit, ^ref, ctx2} ->
+          {module.__sbb_timeout_event__(), run_sbb_cleanup(module, ctx2)}
+
+        # Everything else leaving this frame is on its way somewhere else — a
+        # terminal to the root, a shutdown to the host, an enclosing block's
+        # deadline to the frame that armed it — and every one of them abandons
+        # THIS block. So it cleans up on the way out and the throw continues
+        # carrying the context it produced. A block that reserved something must
+        # release it on every exit, and "the host is dying anyway" is not one of
+        # them: the host's own teardown does not know what a block took.
+        {:sbb_terminal, outcome, reason, type, ctx2} ->
+          throw({:sbb_terminal, outcome, reason, type, run_sbb_cleanup(module, ctx2)})
+
+        {:sbb_shutdown, desc, type, ctx2} ->
+          throw({:sbb_shutdown, desc, type, run_sbb_cleanup(module, ctx2)})
+
+        {:sbb_deadline_hit, other_ref, ctx2} ->
+          throw({:sbb_deadline_hit, other_ref, run_sbb_cleanup(module, ctx2)})
       after
         pop_sbb_frame()
         disarm_sbb_deadline(timer, ref)
@@ -641,6 +660,43 @@ defmodule FSL.Runner do
       map when is_map(map) -> map
       _none -> %{}
     end
+  end
+
+  # A block's own `cleanup/1`, run on every way out of `run_sbb/3` — a return, a
+  # deadline, a terminal unwinding through, an enclosing block's deadline passing
+  # through. Called while the block is still on the reporting stack, so anything
+  # it does is attributed to the block rather than to the host state it is about
+  # to hand control back to.
+  #
+  # Unlike a machine's `cleanup/1`, whose return the runner discards, a block's
+  # is **threaded**: what a block reserved lives in the host's context, so
+  # releasing it means clearing it there. A block that returns anything other
+  # than a context has its return ignored, which is what lets `:ok` be written.
+  #
+  # Defensive, because this runs on the failure path: a cleanup that raises must
+  # not turn a block's clean return into an exception, nor swallow the terminal
+  # that was on its way to the root.
+  defp run_sbb_cleanup(module, ctx) do
+    if function_exported?(module, :cleanup, 1) do
+      case module.cleanup(ctx) do
+        %{__struct__: _} = returned -> returned
+        _other -> ctx
+      end
+    else
+      ctx
+    end
+  rescue
+    e ->
+      Logger.error(
+        "cleanup/1 of #{inspect(module)} raised: " <>
+          Exception.format(:error, e, __STACKTRACE__)
+      )
+
+      ctx
+  catch
+    kind, reason ->
+      Logger.error("cleanup/1 of #{inspect(module)} #{kind}: #{inspect(reason)}")
+      ctx
   end
 
   @doc false

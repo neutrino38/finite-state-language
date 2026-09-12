@@ -912,20 +912,26 @@ Settled (review of 2026-08-15):
    layer shipped: 0.2.0 is the first release here to carry `fx.sbb`, and it
    carries the shared contract from the start.
 
-   **Correction, 2026-09-12.** Half of that last sentence was not true and is
-   recorded here rather than quietly dropped: *"Elixir took this dialect's
-   per-block `cleanup`"*. It did not. `FSL.Block` declares `@sbb_timeout`,
-   `@sbb_namespace`, `@sbb_returns`, `@sbb_args` and `@sbb_timeout_event`, and
-   nothing else; `cleanup/1` is called once by the runner's teardown, on the
-   *machine's* module, and `run_sbb/3`'s `after` only pops the frame and disarms
-   the deadline. A block that reserves something therefore has to release it
-   before it returns, on every branch — which is exactly the failure a per-block
-   `cleanup` exists to prevent, and a `sbb_return` from a branch that forgot is
-   a leak with nothing in the log.
+   **Correction, 2026-09-12.** Half of that last sentence was not true when it
+   was written and is recorded here rather than quietly dropped: *"Elixir took
+   this dialect's per-block `cleanup`"*. It had not. A block that reserved
+   something had to release it before every `sbb_return` and on every branch,
+   which is exactly the failure a per-block `cleanup` exists to prevent — a
+   branch that forgot leaked with nothing in the log.
 
-   So it is an **open commitment on the Elixir side**, not a divergence: the
-   name and the contract are this dialect's and are settled, and Elixir owes the
-   hook. Until then a host cannot assume a block cleaned up after itself.
+   **Settled the same day**: `FSL.Block` takes `cleanup/1`, run on every way out
+   of a block — a return, its own deadline, a terminal unwinding through it, a
+   cooperative shutdown passing through, and an **enclosing** block's deadline
+   abandoning it. That last exit is the one no hand-written release could have
+   covered, and it is the argument for the hook rather than a bonus: a block is
+   a subroutine of a machine that is often dying, and "the host is tearing down
+   anyway" is not a reason to skip the release, because the host's own cleanup
+   does not know what a block took.
+
+   One difference from this dialect, and it is forced: the Elixir hook is
+   **threaded** — what a block reserved lives in the host's context, so
+   releasing it means returning a context. Here `cleanup(ctx)` mutates, so there
+   is nothing to return.
 
 Still open:
 
@@ -991,9 +997,11 @@ written without touching the language.
 
 ### 12.4 Commitments
 
+Settled since this pass opened: **a per-block `cleanup`**, which Elixir owed and
+delivered on 2026-09-12 (§11.6). What remains:
+
 | Owed by | What | Why it matters |
 |---|---|---|
-| Elixir | a per-block `cleanup`, the contract already settled here (§11.6) | a block that reserves something must release it on every branch today, and a `sbb_return` from a branch that forgot leaks silently |
 | TS | `goto back`, if a screen ever needs it (§11.4) | deferred, not refused; Elixir's semantics are the reference — one slot and not a stack, written only on a real state change, two consecutive calls toggling, no previous state being a clean failure |
 | both | `queue()`, the `Queue()` of the field | named in Elixip's SBB design as future work; it takes names for objects a server owns, so it is not a language question yet |
 
