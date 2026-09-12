@@ -40,12 +40,15 @@ defmodule FSL.Monitor do
   would read as "nobody measured".
 
   A pid can also `subscribe/1` to be told of changes as they happen instead of
-  polling `calls/0` — `{:fsl_monitor, {:updated, slot, row}}` after
-  every reported change, `{:fsl_monitor, {:cleared, slot}}` when a slot
-  (and any sub-FSM children) is cleared. On the model of
-  `Kelix.Mod.Registrar.subscribe_register_event/2`; `Kelix.InstancePool` is the
-  one subscriber today, joining these with its own rows for
-  `Kelix.Control.subscribe_monitor/1`.
+  polling `calls/0` — `{:fsl_monitor, {:updated, slot, row}}` after every
+  reported change, `{:fsl_monitor, {:cleared, slot}}` when a slot (and any
+  sub-FSM children) is cleared.
+
+  `subscribe/1` **returns the snapshot**, taken inside the call that registers
+  the subscriber, and the subscriber is **monitored** so a dead one is dropped
+  without an `unsubscribe/1`. Both matter for the same reason: subscribing is the
+  normal way to use this, so neither a lost first row nor a set that only grows
+  is acceptable. See `subscribe/1` for what each one prevents.
   """
   use GenServer
 
@@ -183,10 +186,31 @@ defmodule FSL.Monitor do
     :ok
   end
 
-  @doc "Subscribe `pid` to call changes (see the moduledoc for the message shapes)."
-  @spec subscribe(pid()) :: :ok
+  @doc """
+  Subscribe `pid` to call changes and **return the snapshot** — the same rows
+  `calls/0` would give, taken inside the call that registers the subscriber.
+
+  Returning it is the contract and not a convenience. A subscriber needs both:
+  the rows that already exist, and the changes from now on. Taking them in two
+  calls leaves a window, and only one order of the two is even survivable —
+  subscribe first, then snapshot, so a change landing in between arrives as a
+  push *and* in the snapshot, a duplicate `upsert` that is idempotent and
+  harmless. Snapshot-first loses it outright, and the row then stays stale until
+  the call happens to change again. That reads like a tidying opportunity and it
+  is a data-loss bug, so the window is removed rather than documented.
+
+  `pid` is **monitored**: a subscriber that dies is dropped, with no
+  `unsubscribe/1` needed. In a library that matters more than it did in one
+  application — subscribing is the normal way to use this, and a `MapSet` that
+  only ever grows means every later change `send/2`s into the void.
+  """
+  @spec subscribe(pid()) :: [call_info()]
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
 
+  @doc """
+  Stop a subscription. Rarely needed — a subscriber that dies is dropped on its
+  own — and there for a process that stops caring without stopping.
+  """
   @spec unsubscribe(pid()) :: :ok
   def unsubscribe(pid), do: GenServer.call(__MODULE__, {:unsubscribe, pid})
 
@@ -198,22 +222,36 @@ defmodule FSL.Monitor do
     # registry stores them and never reads them.
     columns = opts |> Keyword.get(:columns, []) |> Map.new()
 
-    {:ok, %{calls: %{}, seq: 0, subs: MapSet.new(), columns: columns}}
+    # `subs`: subscriber pid => the monitor reference held on it, so a dead
+    # subscriber can be dropped from a `:DOWN` that only names the ref.
+    {:ok, %{calls: %{}, seq: 0, subs: %{}, columns: columns}}
   end
 
   @impl true
-  def handle_call({:subscribe, pid}, _from, st),
-    do: {:reply, :ok, %{st | subs: MapSet.put(st.subs, pid)}}
+  # Registering and snapshotting in ONE call is the whole point: there is no
+  # window for a change to fall into. Re-subscribing an already-subscribed pid
+  # keeps its existing monitor rather than taking a second one.
+  def handle_call({:subscribe, pid}, _from, st) do
+    subs =
+      if Map.has_key?(st.subs, pid),
+        do: st.subs,
+        else: Map.put(st.subs, pid, Process.monitor(pid))
 
-  def handle_call({:unsubscribe, pid}, _from, st),
-    do: {:reply, :ok, %{st | subs: MapSet.delete(st.subs, pid)}}
-
-  def handle_call(:calls, _from, st) do
-    rows =
-      st.calls |> Map.values() |> Enum.sort_by(& &1.idx) |> Enum.map(&row(&1, st.columns))
-
-    {:reply, rows, st}
+    {:reply, snapshot(st), %{st | subs: subs}}
   end
+
+  def handle_call({:unsubscribe, pid}, _from, st) do
+    case Map.pop(st.subs, pid) do
+      {nil, _subs} ->
+        {:reply, :ok, st}
+
+      {ref, subs} ->
+        Process.demonitor(ref, [:flush])
+        {:reply, :ok, %{st | subs: subs}}
+    end
+  end
+
+  def handle_call(:calls, _from, st), do: {:reply, snapshot(st), st}
 
   @impl true
   def handle_cast({:report, call_id, scenario, username, state, event, event_type}, st) do
@@ -294,8 +332,23 @@ defmodule FSL.Monitor do
     {:noreply, st}
   end
 
+  @impl true
+  # A subscriber that died. Dropped here rather than left in the set until an
+  # explicit `unsubscribe/1` that is never coming.
+  def handle_info({:DOWN, ref, :process, pid, _reason}, st) do
+    case Map.fetch(st.subs, pid) do
+      {:ok, ^ref} -> {:noreply, %{st | subs: Map.delete(st.subs, pid)}}
+      _other -> {:noreply, st}
+    end
+  end
+
+  def handle_info(_msg, st), do: {:noreply, st}
+
+  defp snapshot(st),
+    do: st.calls |> Map.values() |> Enum.sort_by(& &1.idx) |> Enum.map(&row(&1, st.columns))
+
   defp notify(st, msg) do
-    for pid <- st.subs, do: send(pid, {:fsl_monitor, msg})
+    for {pid, _ref} <- st.subs, do: send(pid, {:fsl_monitor, msg})
     :ok
   end
 
