@@ -5,11 +5,12 @@ described as a finite state machine, the engine that runs it, and the seam a
 *protocol binding* plugs into. Everything described here is implemented and
 covered by tests, in `lib/fsl/`.
 
-This document is the **why and how it is built**. The language *reference* — what
-to write, macro by macro, with examples — is Elixip's
-[FSL.md][fsl-md], which documents the language through its
-first binding and is the right place to start if you are writing a machine
-rather than changing one. The cross-language contract with the TypeScript
+This document is the **why and how it is built**. The *reference* — what to
+write, macro by macro — is the
+[API documentation](https://hexdocs.pm/finite_state_language), starting at
+`FSL.Machine`; Elixip's [FSL.md][fsl-md] is the longer prose guide, which
+documents the language through its first binding. Both are the right place to
+start if you are writing a machine rather than changing one. The cross-language contract with the TypeScript
 implementation is [`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md).
 
 > **History.** This file was `docs/design/DESIGN-FSL.md` in

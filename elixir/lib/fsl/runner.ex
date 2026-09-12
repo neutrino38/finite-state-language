@@ -210,14 +210,35 @@ defmodule FSL.Runner do
   end
 
   @doc """
-  Spawn a UAS scenario instance to handle one inbound dialog (e.g. a REGISTER).
-  Used by a registration processing module (`Elixip.RegistrarUAS`) from inside
-  `on_new_registration/3`: it returns `{pid, ref}` where `pid` is the bound app
-  process to return as `{:accept, pid}` and `ref` is a monitor reference the
-  caller can use to free its instance slot when the scenario ends.
+  Start one machine to serve one inbound session, and monitor it.
 
-  `opts` are forwarded to `run_instance/2`; `:dialog_pid`, `:inbound_request`
-  and `:parent_pid` are the relevant ones for a server scenario.
+  This is the server-side entry point: something outside FSL accepts a new
+  session — a connection, a call, a request — and needs a machine bound to it,
+  plus a way to know when that machine is done.
+
+      {pid, ref} = FSL.Runner.spawn_uas_instance(MyApp.Greeter, parent_pid: self())
+
+  It returns `{pid, ref}`, where `pid` is the process running the machine and
+  `ref` is a monitor reference: the caller receives `{:DOWN, ref, :process, pid,
+  reason}` when the run ends, which is where a pool frees the slot it charged for
+  this session.
+
+  `opts` are forwarded to `run_instance/2`. `:parent_pid` names who is told about
+  the outcome; `:dialog_pid` and `:inbound_request` are the two slots a binding
+  uses to hand the machine the session it is being started for, and what goes in
+  them is the binding's business.
+
+  `target` is a module or a path, resolved **relative to the current directory**
+  — unlike `spawn_fsm`, which resolves relative to the file that declares it.
+  A server target comes from an operator (a command line, a configuration file),
+  so it is read the way any path a person types is read.
+
+  ### Example: a SIP registrar
+
+  In [Elixip](https://github.com/neutrino38/elixip), a registration module calls
+  this from `on_new_registration/3` with the dialog and the REGISTER it just
+  received, and returns the `pid` as `{:accept, pid}`; the `ref` frees one slot of
+  the concurrency quota when the scenario ends.
   """
   @spec spawn_uas_instance(module() | Path.t(), keyword()) :: {pid(), reference()}
   def spawn_uas_instance(target, opts \\ []) do

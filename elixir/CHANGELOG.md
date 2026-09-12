@@ -12,14 +12,12 @@ with a migration, never a tidying.
 
 ## [0.2.0] — 2026-09-12
 
-The first release of this package, numbered to match the TypeScript sibling
-rather than to count this package's own releases. What the two share is the
-*contract*, reconciled clause by clause in
-[`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md) §12 — the SBB return shape, the
-declared vocabulary, the block-level bound, `resume:`, the inter-machine event
-names. Two numbers for one language would tell a reader that one half is a
-release behind, which is the thing this repository exists to deny; and nothing
-was ever published as 0.1.x, so the jump costs nobody anything.
+The first release of this package, numbered to match the TypeScript
+implementation rather than to count this package's own releases. The two honour
+the same *contract*, reconciled clause by clause in
+[`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md)
+§12 — the SBB return shape, the declared vocabulary, the block-level bound,
+`resume:`, the inter-machine event names.
 
 ### Added — the first release
 
@@ -127,24 +125,13 @@ binding meets exactly these:
   the life of the node and every later change was `send/2` into the void;
 - `stay` outside an `on_events` raised a `CompileError` with **no file and no
   line**, unlike the three other compile-time checks. A check whose message
-  points at nothing stops helping the author — and once the language is a package,
-  "points at nothing" becomes "points into the package".
+  points at nothing stops helping the author — and in a package, "points at
+  nothing" reads as "points somewhere inside the dependency".
 
-### Not yet
+### Divergences kept on purpose
 
-- not published to hex;
-- the cross-language spec (the cross-language spec) is reconciled clause by clause
-  but the pending-queue difference and a few `stay` / `goto back` semantics are
-  recorded there as deliberate divergences rather than resolved;
-- `mix hex.publish`.
-
-The tests that stayed in Elixip stayed on purpose: ~91 of them are the proof
-that the *host wiring* works — the external config, the account column, the
-call-shape columns, the media failure domain, the UAS and B2BUA suites, the
-reference scenarios — and four files were **split** rather than moved, each
-keeping the half that needs a protocol: `spawn_fsm_test` (what a `:uas_invite`
-child needs), `scenario_loader_test` (the built-ins and the `:uac` default),
-`fsl_compile_error_location_test` (that a facade's extra layer of expansion does
-not lose the author's file and line). `scenario_resilience_test` moved whole:
-its exit source was already a dead pid and a plain `GenServer.call`, which is
-what a binding's verb is underneath.
+The reconciliation with the TypeScript implementation left two differences
+standing, both recorded in
+[`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md)
+§12 rather than resolved: the pending queue, which the BEAM's selective receive
+makes unnecessary here, and a few details of `stay` and `goto back`.

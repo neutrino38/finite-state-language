@@ -13,3 +13,4 @@ erl_crash.dump
 # the journal on should chdir to a temp dir first; this is the safety net.
 *.puml
 *.mmd
+*.tar

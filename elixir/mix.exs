@@ -1,13 +1,13 @@
 defmodule FSL.MixProject do
   use Mix.Project
 
-  # 0.2.0 and not 0.1.0, deliberately: the TypeScript sibling is at 0.2.0, and
-  # what the two now share is the *contract* — the SBB return shape, the
-  # vocabulary declared and refused, the block-level bound, `resume:`, the
-  # inter-machine event names — reconciled clause by clause in
-  # ../spec/fsl-js-ts.md §12. Two numbers for one language would tell a reader
+  # One number for one language: this package and the npm package
+  # `finite-state-language` carry the same version, because what they share is
+  # the *contract* — the SBB return shape, the vocabulary declared and refused,
+  # the block-level bound, `resume:`, the inter-machine event names — reconciled
+  # clause by clause in ../spec/fsl-js-ts.md §12. Two numbers would tell a reader
   # that one half is a release behind, which is the thing this repository exists
-  # to deny. Nothing was published as 0.1.x, so the jump costs nothing.
+  # to deny. So this package opened at 0.2.0, matching the sibling.
   @version "0.2.0"
   @source_url "https://github.com/neutrino38/finite-state-language"
 
@@ -63,7 +63,10 @@ defmodule FSL.MixProject do
       # permissive one, and the extraction does not travel the other way.
       licenses: ["Apache-2.0"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib samples mix.exs README.md LICENSE NOTICE CHANGELOG.md docs),
+      # `docs/design.md` and not `docs`: `docs/extraction-plan.md` is the record
+      # of how this package was lifted out of Elixip, which belongs in the
+      # repository and not in the tarball a consumer unpacks.
+      files: ~w(lib samples mix.exs README.md LICENSE NOTICE CHANGELOG.md docs/design.md),
       maintainers: ["Emmanuel Buu"]
     ]
   end

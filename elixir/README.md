@@ -3,8 +3,8 @@
 The Elixir implementation of the **Finite State Language**: describe a process as
 a finite state machine — states, transitions, `on_events` and its selective
 receive, `stay`, `goto back`, sub-FSMs and cooperative shutdown, service building
-blocks, a live registry, a sequence journal and a PlantUML renderer — and plug a
-*protocol* into it.
+blocks, a live registry, a sequence journal and its PlantUML and Mermaid
+renderers — and plug a *protocol* into it.
 
 ```elixir
 defmodule Turnstile do
@@ -40,6 +40,18 @@ FSL.Runner.run_instance(Turnstile)
 **The core depends on nothing but `Logger` and OTP.** `FSL.HTTP` is the one
 module that needs a client, and `Req` is declared `optional: true` for it.
 
+## Install
+
+```elixir
+def deps do
+  [{:finite_state_language, "~> 0.2"}]
+end
+```
+
+Three names for one thing: `finite_state_language` is the hex package,
+`:fsl` is the OTP application, `FSL.*` is what the code writes. Documentation is
+on [hexdocs](https://hexdocs.pm/finite_state_language).
+
 ## Run something
 
 ```
@@ -71,20 +83,20 @@ framework — could be written without touching FSL. SIP is the first, in
 [Elixip](https://github.com/neutrino38/elixip): `SIP.FSL.Host` is ~380 lines and
 `SIP.Scenario` is the 100-line facade a SIP scenario writes.
 
-## Status
+## Documentation
 
-Extracted from Elixip and building here; **not yet published to hex**. The
-package will be `finite_state_language` (OTP app `:fsl`, modules `FSL.*`),
-licensed Apache-2.0 — decided 2026-09-12, see
-[docs/extraction-plan.md](https://github.com/neutrino38/finite-state-language/blob/main/elixir/docs/extraction-plan.md) §8, which is also the record
-of every seam and why it is where it is.
+- the [API reference](https://hexdocs.pm/finite_state_language) — `FSL.Machine`
+  is the entry point, `FSL.Host` is what an embedding writes;
+- [`samples/README.md`](samples/README.md) — the fishing trip, annotated;
+- [`docs/design.md`](docs/design.md) — the as-built design: why the engine is a
+  flat call stack, what `stay` rewrites, how a block's `cleanup/1` is guaranteed;
+- [`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md)
+  — the cross-language contract, reconciled clause by clause with the TypeScript
+  implementation, including the divergences kept on purpose.
 
-Remaining before a first release: the `LICENSE`/`NOTICE` files, `CHANGELOG.md`,
-ex_doc output, a reconciliation with
-[the cross-language spec](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md) clause by clause, and the rest of
-Elixip's FSL test suite, which still lives there.
+## Licence
 
-The language reference an integrator reads is
-[FSL.md](https://github.com/neutrino38/elixip/blob/master/FSL.md) and its
-as-built design is
-[DESIGN-FSL.md](https://github.com/neutrino38/elixip/blob/master/docs/design/DESIGN-FSL.md).
+[Apache-2.0](https://github.com/neutrino38/finite-state-language/blob/main/elixir/LICENSE). The code was extracted from
+[Elixip](https://github.com/neutrino38/elixip), which stays BUSL-1.1, and
+relicensed so that both implementations of the language ship under one licence —
+see [`NOTICE`](https://github.com/neutrino38/finite-state-language/blob/main/elixir/NOTICE).
