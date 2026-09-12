@@ -63,7 +63,7 @@ defmodule FSL.MixProject do
       # permissive one, and the extraction does not travel the other way.
       licenses: ["Apache-2.0"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib mix.exs README.md LICENSE NOTICE CHANGELOG.md docs),
+      files: ~w(lib samples mix.exs README.md LICENSE NOTICE CHANGELOG.md docs),
       maintainers: ["Emmanuel Buu"]
     ]
   end
@@ -75,7 +75,8 @@ defmodule FSL.MixProject do
       # extraction-plan.md is deliberately NOT here: it is a historical document
       # whose links point into the sibling repositories, and ex_doc would lint it
       # as if it were reference material.
-      extras: ["README.md", "CHANGELOG.md", "docs/design.md"],
+      extras: ["README.md", "samples/README.md", "CHANGELOG.md", "docs/design.md"],
+      groups_for_extras: ["Getting started": ["README.md", "samples/README.md"]],
       groups_for_modules: [
         "The language": [FSL.Machine, FSL.Block, FSL.Context],
         "The engine": [FSL.Runner, FSL.Loader, FSL.Child],

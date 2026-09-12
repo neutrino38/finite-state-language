@@ -1,46 +1,107 @@
 defmodule FSL.Host do
   @moduledoc """
-  What an **embedding** of FSL provides, and the only thing the language asks of
-  one.
+  What an **embedding** of FSL provides: everything the language refuses to
+  decide for itself.
 
-  FSL runs state machines. It knows states, transitions, `on_events` and its
-  selective-receive semantics, `stay`, `goto back`, sub-FSMs and cooperative
-  shutdown, service building blocks, the journal. It knows nothing about a
-  dialog, a transaction, a media plane or a call — and the test of whether a seam
-  is cut in the right place is not "does the SIP binding still work" (it will,
-  whatever we do, because the code was shaped around it) but whether a **second**
-  binding could be written without touching FSL. XMPP, Matrix and the frameworks
-  behind chatbots are the candidates named for this; none of them has a dialog or
-  a transaction, and two of them have no notion of a call at all.
+  FSL runs state machines, and that is all it does. It knows states,
+  transitions, `on_events` and its selective-receive semantics, `stay`,
+  `goto back`, sub-FSMs, cooperative shutdown, service building blocks and the
+  journal. It knows nothing about a socket, a session, a protocol or a call.
+  Every question that needs such a thing to answer is a callback on this
+  behaviour.
 
-  So everything FSL must not know is a callback here. A scenario names its host
-  at `use` time, the module records it, and the runner reads it back through the
-  generated `__fsl_host__/0` — no application env, no global configuration, so
-  two hosts coexist in one VM. That is what makes the language testable with a
-  trivial host of its own (`FSL.Host.Default`), and what a package needs.
+  ## The smallest host that is not the default
 
-  Every callback is optional: `FSL.Host.Default` answers each of them with the
-  least the machine needs, so a state machine with no protocol at all runs with
-  no host written.
+  Twelve callbacks, **all optional**, and a host inherits `FSL.Host.Default` for
+  every one it leaves out. So a real host can be this:
 
-  ## The callbacks, and what SIP puts in each
+      defmodule Fishing.Host do
+        @behaviour FSL.Host
 
-  | Callback | SIP's implementation |
+        # Draw a run as Mermaid rather than PlantUML.
+        @impl true
+        def diagram_renderer, do: FSL.Diagram.Mermaid
+
+        # An event from the lake is a lake event. FSL classifies its own
+        # vocabulary and asks the embedding about everything else.
+        @impl true
+        def event_type(:bite), do: :lake
+        def event_type(:duck), do: :lake
+        def event_type(_other), do: nil
+      end
+
+      defmodule Fishing.Trip do
+        use FSL.Machine, host: Fishing.Host
+        # …
+      end
+
+  That is a complete, working host — `samples/fishing.exs` runs it. It answers
+  two questions and inherits ten, which is what "optional" buys.
+
+  ## When each callback is asked
+
+  Grouped by *when*, because that is what decides what a callback may do. The
+  three compile-time ones are asked while the machine is being compiled, so the
+  host module has to be **defined before the machine that names it** — a host
+  further down the same file does not exist yet, and the machine silently gets
+  the defaults.
+
+  | When | Callback | The question |
+  |---|---|---|
+  | compile time | `c:event_type/1` | what kind of event does a clause matching *this* pattern carry? |
+  | | `c:injected_clauses/1` | which clauses must every wait carry, whether or not the author thought of them? |
+  | | `c:clause_covers?/2` | does a clause the author wrote already cover one of those? |
+  | starting a run | `c:bootstrap/0` | what has to be running before any machine can act? |
+  | | `c:build_context/1` | what does this machine's `config` block *mean*? |
+  | | `c:apply_run_opts/2` | what do the run options this embedding accepts do? |
+  | during a run | `c:on_event/2` | what does the embedding do with an event, before the machine's own clause? |
+  | | `c:on_state_enter/1` | what must be forgotten when a state is entered? |
+  | | `c:account/2` | who is this run about? |
+  | | `c:spawn_child/2` | what does a freshly spawned child of this kind need? |
+  | ending a run | `c:finalize/1` | what does the embedding hold that must be released? |
+  | writing it down | `c:diagram_renderer/0` | how is a run drawn? |
+
+  ## How a host is found
+
+  A machine names it at `use` time, the module records it, and the runner reads
+  it back through the generated `__fsl_host__/0`:
+
+      use FSL.Machine, host: MyApp.Host
+
+  No application env and no global configuration, which is deliberate: two
+  embeddings coexist in one VM, so a library can run its own machines beside
+  yours, and the language is testable against a host that is nobody's protocol
+  (`FSL.Test.Host`, in this package's test suite).
+
+  ## A worked example: SIP
+
+  SIP is **one** embedding — the first one, in
+  [Elixip](https://github.com/neutrino38/elixip), where this language grew up —
+  and it is worth reading as a sanity check on how much a real protocol needs,
+  not as a description of what a host must be. `SIP.FSL.Host` is about 380 lines
+  and answers eleven of the twelve:
+
+  | Callback | What SIP does |
   |---|---|
-  | `c:bootstrap/0` | start the transaction layer, the transport selector, the dialog layer, the config registry and the node's auth secret |
-  | `c:build_context/1` | turn the `config` block into a `%SIP.Context{}`: the native properties, `:passwd` -> `:ha1`, the global keys routed to the application env, the rest into appdata |
-  | `c:account/2` | who a UAS instance serves: the identity the inbound request asserts, once, then silence so the script can speak |
-  | `c:apply_run_opts/2` | the dialog an inbound request already created, and the request itself |
-  | `c:spawn_child/2` | register a `:uas_invite` child with the call dispatcher, so the next inbound INVITE reaches it |
-  | `c:finalize/1` | wind down the B2BUA legs, then the media, waiting first for the dialog to end |
-  | `c:on_event/2` | which leg and transaction the event came from, what a dead leg owes, then stash the request |
-  | `c:on_state_enter/1` | forget the matched event's leg and transaction |
-  | `c:event_type/1` | `:ms_event` is media, anything else it is shown is SIP |
-  | `c:injected_clauses/1` | the media server going away |
-  | `c:clause_covers?/2` | whether the scenario already handles that itself |
-  | `c:diagram_renderer/0` | not implemented: the PlantUML renderer FSL ships is the right one |
+  | `c:bootstrap/0` | start the transaction layer, the transport selector, the dialog layer, the session config registry, and the node's auth secret |
+  | `c:build_context/1` | route each `config` key to one of three places: a field of its own context struct, the application env for a node-wide setting, or `appdata` |
+  | `c:apply_run_opts/2` | read `:dialog_pid` and `:inbound_request` — a server instance does not create the dialog it serves |
+  | `c:on_event/2` | record which call leg and which transaction the event came from, answer what a leg that has just died owes, then stash an inbound request where the reply verbs will find it |
+  | `c:on_state_enter/1` | forget that leg and that transaction |
+  | `c:event_type/1` | a media-server event is `:media`; anything else it is shown is `:sip` |
+  | `c:injected_clauses/1` | one clause in every wait: the media server going away |
+  | `c:clause_covers?/2` | generously — a clause matching any media event, or a catch-all, counts |
+  | `c:account/2` | the identity the inbound request asserts, once, then silence so the script can name a better one |
+  | `c:spawn_child/2` | register a child that waits for a call with the call dispatcher |
+  | `c:finalize/1` | wind down the call legs, then the media, after a bounded wait for the dialog to end |
+  | `c:diagram_renderer/0` | not implemented — the default is the right one |
 
-  That is the whole list.
+  The test of whether a seam is in the right place is never "does SIP still
+  work": it will, because this code was shaped around it. The test is whether a
+  **second** embedding could be written without touching FSL. XMPP, Matrix and
+  the frameworks behind chat bots are the candidates that were used to check;
+  none of them has a dialog or a transaction, and two of them have no notion of
+  a call at all.
   """
 
   @doc """
@@ -63,155 +124,230 @@ defmodule FSL.Host do
   @callback build_context(config :: keyword()) :: FSL.Context.t()
 
   @doc """
-  The label a run is reported under — the monitor's `account` column.
+  Who is this run about? The `account` column of `FSL.Monitor`, which is what an
+  operator scans a live table by.
 
   Called with the context and `:initial` for the first row of a run, then
-  `:subsequent` for every one after it. The distinction is the binding's to make:
-  SIP answers the identity the inbound request asserts for the first row of a UAS
-  instance and then keeps quiet, so the script can name the AOR it registered or
-  the conference it joined without every transition clobbering it.
+  `:subsequent` for every one after it — and **an empty string means "keep what
+  you have"**, which is why the distinction exists. SIP answers the identity the
+  inbound request asserts for the first row of a server instance and then keeps
+  quiet, so a script that learns a better name (the address it registered, the
+  conference it joined) can set it without every later transition clobbering it.
 
-  A host that has nothing to say about accounts leaves the column empty by not
-  implementing this.
+      @impl true
+      def account(ctx, :initial), do: FSL.Context.appdata_get(ctx, :label) || ""
+      def account(_ctx, :subsequent), do: ""
+
+  A host that has nothing to say leaves the column empty by not implementing
+  this.
   """
   @callback account(ctx :: FSL.Context.t(), phase :: :initial | :subsequent) :: String.t()
 
   @doc """
-  Prepare a child FSM that `spawn_fsm` has just started, given the kind its
-  module declared and its pid.
+  Prepare a child machine that `spawn_fsm` has just started, given the **kind**
+  its module declared and its pid.
 
-  The kind is an **opaque term** as far as FSL is concerned — whatever the
-  binding's own annotation wrote there. SIP writes `:uac`, `:uas_register`,
-  `:uas_invite`, and a `:uas_invite` child is one that does nothing until an
-  INVITE is routed to it, so the SIP host registers it with the call dispatcher.
-  A language that knew those atoms would be a language that knows about server
-  roles in a protocol.
+  The kind is an opaque term as far as FSL is concerned: whatever an embedding's
+  own annotation put in `__scenario_type__/0`. A child that does nothing until
+  something is routed to it has to be registered somewhere, and this is where.
+
+  SIP writes `:uac`, `:uas_register` and `:uas_invite` there; a `:uas_invite`
+  child waits for an inbound call, so that host registers it with the call
+  dispatcher and installs the dispatcher as the call-processing module. A
+  language that knew those three atoms would be a language that knows about
+  server roles in a protocol.
   """
   @callback spawn_child(kind :: term(), pid :: pid()) :: :ok
 
   @doc """
-  Release what the binding holds for this run, and return the context.
+  Release what the embedding holds for this run, and return the context.
 
-  One callback rather than one per resource, because the order between them is
-  the binding's rule and has to stay in one place: SIP releases its B2BUA legs
-  before its media, and waits (bounded) for the dialog to end first. Where this
-  step sits among the others — after the children, before `cleanup/1` and before
-  the parent is told — is the FSM's, and stays in the runner.
+      @impl true
+      def finalize(ctx) do
+        case FSL.Context.appdata_get(ctx, :connection) do
+          nil -> ctx
+          conn -> close(conn) && FSL.Context.appdata_set(ctx, :connection, nil)
+        end
+      end
+
+  **One callback rather than one per resource**, because when an embedding holds
+  several the order between them is its own rule and has to stay in one place:
+  SIP releases its call legs before its media — a leg left behind holds the call
+  up at the far end, and it is the leg that carries the media — and waits,
+  bounded, for the dialog to end first.
+
+  *Where* this step sits among the others — after the children, before
+  `cleanup/1`, before the parent is told — is the machine's, and stays in
+  `FSL.Runner`.
   """
   @callback finalize(ctx :: FSL.Context.t()) :: FSL.Context.t()
 
   @doc """
-  Apply the `run_instance/2` options the FSM has no reading of.
+  Apply the `run_instance/2` options the machine has no reading of, and return
+  the context.
 
   FSL owns `:parent_pid`, `:self_name`, `:appdata`, `:slot_id` and
-  `:config_overrides`, and applies those itself; everything else names something
-  only the binding understands and arrives here. SIP reads two: the dialog an
-  inbound request already created (so the reply macros have a target) and the
-  request itself, which is also what tells the host this is a server instance.
+  `:config_overrides`, and applies those itself. Everything else a caller passes
+  names something only the embedding understands, and arrives here:
 
-  A host with no options of its own returns the context untouched by not
-  implementing this.
+      FSL.Runner.run_instance(MyMachine, connection: conn)
+
+      @impl true
+      def apply_run_opts(ctx, opts) do
+        case Keyword.get(opts, :connection) do
+          nil -> ctx
+          conn -> FSL.Context.appdata_set(ctx, :connection, conn)
+        end
+      end
+
+  SIP reads two: the dialog an inbound request already created — a server
+  instance does not create the one it serves — and the request itself, whose
+  presence is also what tells that host this run is a server instance at all.
+
+  A host with no options of its own inherits the default, which returns the
+  context untouched.
   """
   @callback apply_run_opts(ctx :: FSL.Context.t(), opts :: keyword()) :: FSL.Context.t()
 
   @doc """
-  Act on an event the machine has just received, before the scenario's own
-  clause runs.
+  Act on an event the machine has just received, **before** the machine's own
+  clause runs, and return the context that clause will see.
 
-  Called for **every** matched event, including the ones FSL injects itself, so a
-  binding sees the whole stream. SIP does three things here, and their order is
-  the reason this is one callback rather than three: it records which leg and
-  which transaction the event came from (so a clause replying to it needs no
-  direction argument), then answers what a leg that has just died owes — at once,
-  so the caller hears about its callee going away now rather than at the teardown
-  — and only then stashes an inbound request in the slot the reply macros serve.
-  Written as one function, that order is readable; spread over three injected
-  calls, it lived in the expansion of a macro.
+  Called for every matched event, including the ones FSL injects itself, so an
+  embedding sees the whole stream. This is where bookkeeping that must happen
+  whatever the machine decides belongs — noting where an event came from,
+  answering something that is owed, unpacking a message into the context.
+
+      @impl true
+      def on_event(ctx, {:bite, fish}), do: FSL.Context.appdata_set(ctx, :fish_on, fish)
+      def on_event(ctx, _other), do: ctx
+
+  **One callback and not three**, because when a host does several things here
+  the order between them is usually load-bearing, and one function is where an
+  order can be read. SIP's does three: it records which call leg and transaction
+  the event came from (so a clause replying to it needs no direction argument),
+  then answers what a leg that has just died owes — at once, so a caller hears
+  about its callee going away now rather than at the teardown — and only then
+  stashes an inbound request where the reply verbs will find it. Spread over
+  three injected calls, that sequence lived in the expansion of a macro.
   """
   @callback on_event(ctx :: FSL.Context.t(), event :: term()) :: FSL.Context.t()
 
   @doc """
   Forget whatever the last event left behind, because a state has just been
-  entered.
+  entered. Returns the context.
 
-  The mirror of `c:on_event/2`. FSL clears its own per-event bookkeeping either
-  way; this is for the binding's. SIP forgets the leg and the transaction of the
-  matched event, so an `after` body acts on the inbound leg rather than on
+  The mirror of `c:on_event/2`: anything the embedding remembered *about the
+  event* stops being true the moment the machine moves on. FSL clears its own
+  per-event bookkeeping either way; this is for the embedding's.
+
+  SIP forgets which leg and which transaction the matched event came from, so an
+  `after` body — which no event caused — acts on the inbound leg rather than on
   whatever the previous state happened to match.
   """
   @callback on_state_enter(ctx :: FSL.Context.t()) :: FSL.Context.t()
 
   @doc """
-  Categorize an event from the **first element of the pattern** that matches it,
-  at macro-expansion time.
+  What kind of event does a clause matching this pattern carry? Asked at
+  **macro-expansion time**, with the first element of the pattern.
 
-  FSL classifies what it owns: its own inter-FSM messages (`:parent_msg`,
-  `:child_msg`, `:child_exit`) and the service-block namespaces a scenario has
-  learned are `:scenario`, its control protocol (`:scenario_ctl`) is `:control`.
-  Everything else is the binding's, and the binding's answer is not decoration:
-  the type decides which lane an arrow is drawn from in the sequence diagram, so
-  `:sip` means "from the peer", which is only meaningful when there is a peer.
+      # a clause `{:bite, fish} -> …` asks with `:bite`
+      @impl true
+      def event_type(:bite), do: :lake
+      def event_type(:duck), do: :lake
+      def event_type(_other), do: nil
 
-  SIP answers `:media` for `:ms_event` and `:sip` for anything else it is shown —
-  a method atom, a status code, a bound variable. That *fallback* is exactly why
-  this is a host decision: an unrecognised leading atom drawing an arrow from a
-  peer is a sentence about SIP, not about state machines.
+  The type travels with the transition into the live registry and the sequence
+  diagram, where it decides **which lane an arrow is drawn from**: `:media` goes
+  to the media lane, a handful of types that came from nowhere become a note,
+  and anything else is drawn as coming from the peer (`FSL.Diagram`).
+
+  FSL classifies what it owns — its own inter-FSM messages, its control
+  protocol, a service block's declared namespace — and asks here about
+  everything else, **including the fallback**. That last part is the whole
+  reason this is not the language's: SIP answers `:sip` for any leading atom it
+  is shown, and "an unrecognised event came from the peer" is a sentence about a
+  protocol with a peer in it, not about state machines.
 
   `element` is quoted AST, not a value: a bound variable in the pattern arrives
-  as `{name, meta, context}`. Answer `nil` for anything with nothing to say.
+  as `{name, meta, context}`, so `def event_type({_, _, _}), do: :something` is
+  how a catch-all clause is typed. Answer `nil` for anything with nothing to
+  say.
   """
   @callback event_type(element :: Macro.t()) :: atom() | nil
 
   @doc """
-  Clauses the binding wants prepended to **every** `on_events` wait, as
-  `{name, quoted_clause}`.
+  Clauses to prepend to **every** `on_events` wait, as `{name, quoted_clause}`.
 
-  `ctx` is the context variable of the scenario being compiled, already quoted,
-  so a clause can hand the context back: a binding writes
-  `{:goto, :__shutdown__, "…", :media, unquote(ctx)}` and does not have to know
-  what this particular scenario calls it.
+  This is for an embedding's **failure domains**: something that can go wrong,
+  that is delivered to every machine, and that a machine which never considered
+  it would otherwise sit and wait through.
 
-  SIP injects one: a media server going away. `:server_disconnected` is delivered
-  to every sink and acted upon by nothing, so a scenario without a clause for it
-  would sit waiting for media that cannot come until its own `after` fires — if
-  it has one. FSL injects its own cooperative-shutdown clause, and a service
-  block's deadline, and neither is a host's business.
+      @impl true
+      def injected_clauses(ctx) do
+        [
+          {:lake_froze,
+           quote do
+             {:lake, :froze} ->
+               {:goto, :__shutdown__, "the lake froze", :lake, unquote(ctx)}
+           end
+           |> hd()}
+        ]
+      end
 
-  Run at expansion time. Every injected clause must **leave the state** by
-  construction, which is what lets them be instrumented without the `stay`
-  rewrite and produce no dead branch.
+  `ctx` is the context variable of the machine being compiled, already quoted,
+  so a clause hands the context back without knowing what this particular
+  machine calls it.
+
+  SIP injects one: the media server going away. That event is delivered to every
+  sink and acted upon by nothing, so a scenario with no clause for it waits for
+  media that cannot come until its own `after` fires — if it has one. FSL
+  injects its own cooperative-shutdown clause and a service block's deadline,
+  and neither is an embedding's business.
+
+  Asked at expansion time. Every injected clause must **leave the state** by
+  construction, which is what lets it be instrumented without the `stay` rewrite
+  and produce no dead branch.
   """
   @callback injected_clauses(ctx :: Macro.t()) :: [{atom(), Macro.t()}]
 
   @doc """
-  Does a clause the scenario wrote itself already cover the injected clause
-  called `name`? If so, the injection is dropped and the scenario keeps control.
+  Does a clause the machine wrote itself already cover the injected clause called
+  `name`? If so that injection is dropped and the machine keeps control.
 
-  `pattern` is the quoted pattern of one of the scenario's own clauses, `when`
-  guard stripped. Answered clause by clause, and SIP's answer is **deliberately
-  generous**: a clause matching `{:ms_event, _, :server_disconnected}` obviously
-  covers the media clause, but so does one matching every media event, and so
-  does a catch-all. Erring that way leaves the scenario in charge, which is the
-  safe direction — the default exists for scenarios that never considered the
-  case, not to overrule those that did.
+  `pattern` is the quoted pattern of one of the machine's own clauses, `when`
+  guard stripped, and the question is asked clause by clause:
 
-  Note that FSL's own shutdown clause is **not** governed by this, and the
-  asymmetry is the point: only an explicit `:scenario_ctl` clause opts out of
-  being stoppable. A scenario that merely writes `event -> …` has not thereby
+      @impl true
+      def clause_covers?(:lake_froze, {:lake, _anything}), do: true
+      def clause_covers?(_name, _pattern), do: false
+
+  **Be generous.** An injected clause is a default for machines that never
+  considered the case, not a rule to overrule those that did — so a clause
+  matching the whole family, or a catch-all, should count. Erring that way leaves
+  the author in charge, which is the safe direction.
+
+  FSL's own cooperative-shutdown clause is **not** governed by this, and the
+  asymmetry is deliberate: only an explicit `:scenario_ctl` clause opts out of
+  being stoppable. A machine that merely writes `event -> …` has not thereby
   declined to be stopped, and one that could not be stopped would be a node that
   cannot drain.
   """
   @callback clause_covers?(name :: atom(), pattern :: Macro.t()) :: boolean()
 
   @doc """
-  The module that turns this run's journal into a diagram.
+  How is a run drawn? A module implementing `FSL.Diagram`.
 
-  A binding may want its own; the default is the one FSL ships,
-  `FSL.Diagram.PlantUML` (PlantUML), which after §4.8 needs no protocol
-  vocabulary — its lane rule is by exclusion, so a type it has never heard of is
-  still drawn as coming from the peer.
+  Two ship: `FSL.Diagram.PlantUML` (the default) and `FSL.Diagram.Mermaid`,
+  which renders in a GitHub comment with no toolchain. An embedding that wants
+  its own writes `render/2` and `filename/1`.
 
-  The module must export `to_plantuml/2` and `filename/1`.
+      @impl true
+      def diagram_renderer, do: FSL.Diagram.Mermaid
+
+  Neither shipped renderer knows a protocol: the lane rule is by exclusion, so a
+  type this host answered `c:event_type/1` with — one the renderer has never
+  heard of — is still drawn as coming from the peer.
   """
   @callback diagram_renderer() :: module()
 
@@ -275,15 +411,34 @@ defmodule FSL.Host do
     arity = length(args)
 
     cond do
-      function_exported?(host, fun, arity) ->
+      exports?(host, fun, arity) ->
         apply(host, fun, args)
 
-      match?({:module, _}, Code.ensure_compiled(host)) and function_exported?(host, fun, arity) ->
-        apply(host, fun, args)
+      # A host implements what it needs and inherits the rest. `FSL.Host.Default`
+      # is what "the rest" means — not the literal the call site passes, which is
+      # only reached when the default host has nothing to say either.
+      #
+      # This is not a nicety: `c:build_context/1` is the one callback whose
+      # default does real work, and a host that implemented, say, only
+      # `c:diagram_renderer/0` used to get an empty `%FSL.Context{}` here — its
+      # machine's whole `config` block dropped on the floor, silently, with the
+      # first `appdata_get/1` answering nil.
+      host != FSL.Host.Default and exports?(FSL.Host.Default, fun, arity) ->
+        apply(FSL.Host.Default, fun, args)
 
       true ->
         default
     end
+  end
+
+  # `function_exported?/3` first and on its own — a lookup in an already-loaded
+  # module — with `Code.ensure_compiled/1` behind it, because some of these hooks
+  # are asked while the compiler is running and a host being compiled in the same
+  # pass has to be waited for rather than declared absent.
+  defp exports?(module, fun, arity) do
+    function_exported?(module, fun, arity) or
+      (match?({:module, _}, Code.ensure_compiled(module)) and
+         function_exported?(module, fun, arity))
   end
 end
 

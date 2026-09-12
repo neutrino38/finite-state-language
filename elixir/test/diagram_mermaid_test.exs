@@ -11,7 +11,11 @@ defmodule FSL.DiagramMermaidTest do
   label that ends a statement early produces a diagram that renders, wrongly,
   with no error anywhere.
   """
-  use ExUnit.Case, async: true
+  # NOT async: one test here sets `:fsl, :log_sequence`, which is application
+  # state and therefore everyone's. An async file would turn the journal on
+  # under every machine another async file happens to be running, and those
+  # runs would flush diagrams of their own into the working directory.
+  use ExUnit.Case, async: false
 
   alias FSL.Diagram.Mermaid
 
@@ -44,10 +48,24 @@ defmodule FSL.DiagramMermaidTest do
       refute out =~ "participant ms"
     end
 
-    test "declares a bare participant when the config names nothing" do
+    test "falls back to the machine's own name, and leaves the peer bare" do
       out = render([])
-      assert out =~ ~r/^    participant local$/m
+      # An unlabelled lane tells a reader nothing; the machine's name tells them
+      # whose run they are looking at, and every run has one.
+      assert out =~ ~r/^    participant local as My\.Machine$/m
       assert out =~ ~r/^    participant peer$/m
+    end
+
+    test "prefers the generic keys over the protocol-flavoured ones" do
+      out = render([], label: "the angler", peer: "the lake", username: "alice", domain: "ex.com")
+      assert out =~ "participant local as the angler"
+      assert out =~ "participant peer as the lake"
+
+      # …and the protocol-flavoured keys are not used as labels. They still
+      # appear in the header, which dumps the whole config block on purpose.
+      lanes = for line <- String.split(out, "\n"), String.contains?(line, "participant"), do: line
+      refute Enum.any?(lanes, &String.contains?(&1, "alice"))
+      refute Enum.any?(lanes, &String.contains?(&1, "ex.com"))
     end
 
     test "declares the media lane only when the run touched media" do
@@ -217,23 +235,24 @@ defmodule FSL.DiagramMermaidTest do
       end
     end
 
+    # The journal flushes to the working directory, so this test writes a file
+    # and deletes it. NOT by chdir-ing somewhere temporary first: the working
+    # directory belongs to the VM and not to the process, so a `File.cd!` here
+    # moves it under every concurrently running async test — including one that
+    # loads a fixture by relative path to prove `spawn_fsm` resolves against the
+    # declaring file. That is not a hypothetical; it is how this test was
+    # written the first time, and it broke that one.
     test "the journal writes the dialect the host named" do
-      tmp = Path.join(System.tmp_dir!(), "fsl-mermaid-#{System.unique_integer([:positive])}")
-      File.mkdir_p!(tmp)
-      on_exit(fn -> File.rm_rf!(tmp) end)
-
-      previous = File.cwd!()
-      File.cd!(tmp)
       Application.put_env(:fsl, :log_sequence, true)
 
       on_exit(fn ->
         Application.delete_env(:fsl, :log_sequence)
-        File.cd!(previous)
+        Enum.each(Path.wildcard("FSL.DiagramMermaidTest.Machine_*.mmd"), &File.rm/1)
       end)
 
       assert FSL.Runner.run_instance(Machine) == :ok
 
-      assert [path] = Path.wildcard(Path.join(tmp, "*.mmd"))
+      assert [path | _] = Path.wildcard("FSL.DiagramMermaidTest.Machine_*.mmd")
       content = File.read!(path)
       assert content =~ "sequenceDiagram"
       assert content =~ "participant local as alice"

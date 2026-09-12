@@ -91,12 +91,8 @@ defmodule FSL.Diagram.Mermaid do
   # ── Participants ────────────────────────────────────────────────────────────
 
   defp participants(meta, events) do
-    config = Map.get(meta, :config, [])
-
-    base = [
-      participant(@local, Keyword.get(config, :username)),
-      participant(@remote, Keyword.get(config, :domain))
-    ]
+    {local, peer} = FSL.Diagram.lane_labels(meta)
+    base = [participant(@local, local), participant(@remote, peer)]
 
     # Only declare the media lane when the run actually touched media, so a
     # machine with no media plane gets a two-lane diagram.

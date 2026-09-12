@@ -46,6 +46,13 @@ The language:
   number of transitions, a fixed teardown order, and three outcomes so a
   controller-driven stop is not counted as a failure.
 
+A runnable sample:
+
+- `samples/fishing.exs` — a fishing trip that plays itself in two seconds and
+  prints the afternoon as a Mermaid diagram. It needs the deadline that does not
+  restart, `stay`, `goto back`, a sub-FSM and a host, for reasons a reader
+  already believes rather than reasons they have to be taught.
+
 The embedding:
 
 - `FSL.Host` — the twelve callbacks a protocol binding provides, named at `use`
@@ -99,7 +106,16 @@ binding meets exactly these:
   kept every consumer of those rows unchanged;
 - **`:log_sequence` is read under `:fsl`**, not under a binding's app. A binding
   that keeps its configuration in one namespace names it once with
-  `config :fsl, :log_sequence_app, :my_app`.
+  `config :fsl, :log_sequence_app, :my_app`;
+- **a host inherits `FSL.Host.Default` for the callbacks it leaves out.** It used
+  to get the literal each call site passed, which for `c:FSL.Host.build_context/1`
+  meant an empty context — a machine's whole `config` block dropped on the floor,
+  silently, the moment its host implemented any *other* callback. Found by
+  writing the sample;
+- **the diagram's lane labels** are read from `:label` / `:peer`, falling back to
+  `:username` / `:domain` and then to the machine's own name. Those last two are
+  SIP config keys that a generic renderer had no business knowing as its only
+  source.
 
 ### Fixed
 

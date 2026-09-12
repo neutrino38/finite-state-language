@@ -77,6 +77,32 @@ defmodule FSL.Diagram do
   def lane(_type), do: :peer
 
   @doc """
+  What to call the two lanes, from the run's `config` block and its name.
+
+  | Lane | Read from, in order |
+  |---|---|
+  | local | `:label`, then `:username`, then the machine's own name |
+  | peer | `:peer`, then `:domain`, then nothing — the lane stays bare |
+
+  Two generic keys and one protocol-flavoured fallback each, on the same
+  reasoning as the secret masking: reading a key nobody uses costs nothing, and
+  the SIP spellings are what every machine written before this list existed
+  actually says. The machine's name as the last resort because every run has
+  one — an unlabelled lane tells a reader nothing, and `Fishing.Trip` tells them
+  whose afternoon they are looking at.
+  """
+  @spec lane_labels(map()) :: {String.t(), String.t() | nil}
+  def lane_labels(meta) do
+    config = Map.get(meta, :config, [])
+
+    local =
+      Keyword.get(config, :label) || Keyword.get(config, :username) ||
+        Map.get(meta, :scenario)
+
+    {local, Keyword.get(config, :peer) || Keyword.get(config, :domain)}
+  end
+
+  @doc """
   Did this run touch media? Used to decide whether to declare a media lane at
   all, so a machine with no media plane gets a two-lane diagram.
   """

@@ -14,7 +14,12 @@ defmodule FSL.StandaloneTest do
   compile and run once these modules are a package that does not depend on
   `:elixip2` (extraction plan §7, P3).
   """
-  use ExUnit.Case, async: true
+  # NOT async, and for a reason worth stating: this file runs machines to
+  # completion, and a machine that finishes while another file has turned
+  # `:fsl, :log_sequence` on flushes a diagram into the working directory.
+  # Application state is everyone's, so a file that runs whole machines stays
+  # out of the concurrent pool.
+  use ExUnit.Case, async: false
 
   # The language, whole: states, `goto next` / `loop` / `back`, `on_events` with
   # its selective receive, `stay`, appdata, `cleanup/1`, the terminals.

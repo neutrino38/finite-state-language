@@ -40,6 +40,18 @@ FSL.Runner.run_instance(Turnstile)
 **The core depends on nothing but `Logger` and OTP.** `FSL.HTTP` is the one
 module that needs a client, and `Req` is declared `optional: true` for it.
 
+## Run something
+
+```
+mix run samples/fishing.exs
+```
+
+Bob goes fishing. Ducks paddle past, the line snags, two fish bite, and he has
+400 ms to strike each time — his hands, which are a sub-FSM with a reaction time
+of their own, take 250 ms. The trip prints itself as a Mermaid diagram you can
+paste into a GitHub comment. [`samples/`](samples/README.md) is the file to read
+first, and it is commented for that.
+
 ## The governing idea
 
 **The context belongs to FSL, and a protocol binding extends it.** The six fields

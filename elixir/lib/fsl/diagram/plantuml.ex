@@ -111,12 +111,8 @@ defmodule FSL.Diagram.PlantUML do
   # ── Participants ────────────────────────────────────────────────────────────
 
   defp participants(meta, events) do
-    config = Map.get(meta, :config, [])
-
-    base = [
-      participant(@local, Keyword.get(config, :username)),
-      participant(@remote, Keyword.get(config, :domain))
-    ]
+    {local, peer} = FSL.Diagram.lane_labels(meta)
+    base = [participant(@local, local), participant(@remote, peer)]
 
     # Only declare the media-server lane when the scenario actually touched media,
     # as a `control` so it is visually distinct from the SIP participants.

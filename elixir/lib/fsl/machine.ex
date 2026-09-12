@@ -4,36 +4,68 @@ defmodule FSL.Machine do
   ExUnit.
 
   A machine is a plain Elixir module — often saved as an `.exs` file so it can be
-  loaded at run time — that does `use FSL.Machine`. What the states may *do* comes
-  from the embedding: `use FSL.Machine` on its own gives the language and nothing
-  else, while a protocol binding wraps it in a facade that brings its verbs along.
-  `SIP.Scenario` is that facade for SIP, and what a SIP scenario writes:
+  loaded at run time — that does `use FSL.Machine`. Here is one going fishing:
 
-      defmodule UAC.Invite do
-        use SIP.Scenario
+      defmodule Fishing.Trip do
+        use FSL.Machine
 
-        config username: "toto", domain: "mydomain.com", passwd: "xxxx"
+        config label: "Bob the angler", quota: 2
 
         state initial_state do
-          media_connect(MediaServer.Mockup, "sip:localhost:8080")
-          goto next
+          appdata_set(:caught, [])
+          goto casting
         end
 
-        state calling do
-          send_INVITE("sip:bob@mydomain.com", :mediaserver, timeout: 30, webrtc: :no)
-          goto wait_answer
+        state casting do
+          IO.puts("A cast. The float settles.")
+          goto waiting
         end
 
-        state wait_answer do
+        state waiting do
           on_events do
-            {200, rsp, trans, _dlg} ->
-              process_invite_reply(rsp, trans)
-              scenario_success("answered")
+            {:bite, fish} ->
+              goto striking, "a bite"
+
+            # A duck is worth noticing and worth nothing else. `stay` consumes
+            # the event without running the state again — and without re-arming
+            # the ten seconds below. Ducks eat your afternoon.
+            {:duck, name} ->
+              IO.puts("(\#{name} paddles past. You wait.)")
+              stay "a duck"
+
+            # A detour that comes back by itself.
+            {:snag, thing} ->
+              goto untangling, "a snag"
           after
-            30_000 -> scenario_failure("no answer")
+            10_000 -> goto packing_up, "patience ran out"
           end
         end
+
+        state untangling do
+          IO.puts("You free the line.")
+          goto back      # wherever we came from — one slot, not a stack
+        end
+
+        state packing_up do
+          scenario_success("\#{length(appdata_get(:caught))} fish")
+        end
       end
+
+  `mix run samples/fishing.exs` runs the whole trip — hands as a sub-FSM, a
+  strike window, and the afternoon printed as a Mermaid diagram. It is the file
+  to read next, and it is commented for that.
+
+  ## What a machine can *do* comes from the embedding
+
+  `use FSL.Machine` gives the language and nothing else: states, transitions,
+  waiting, sub-FSMs. What a state may *act on* — a socket, a dialog, a media
+  plane — is an `FSL.Host` away, and a protocol binding usually wraps both in a
+  facade of its own. `SIP.Scenario`, in
+  [Elixip](https://github.com/neutrino38/elixip), is `use FSL.Machine, host:
+  SIP.FSL.Host, ctx_var: :sip_ctx` plus three session mixins, so a SIP scenario
+  writes `send_INVITE` where the trip above writes `IO.puts`. The language
+  cannot tell the difference, and that is the property the whole design is built
+  to keep.
 
   ## Options
 
