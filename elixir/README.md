@@ -80,7 +80,7 @@ what this package's own suite runs against.
 
 The test of every seam is whether a **second** binding — XMPP, Matrix, a chatbot
 framework — could be written without touching FSL. SIP is the first, in
-[Elixip](https://github.com/neutrino38/elixip): `SIP.FSL.Host` is ~380 lines and
+[Elixip](https://framagit.org/elixip/elixip): `SIP.FSL.Host` is ~380 lines and
 `SIP.Scenario` is the 100-line facade a SIP scenario writes.
 
 ## Documentation
@@ -90,13 +90,13 @@ framework — could be written without touching FSL. SIP is the first, in
 - [`samples/README.md`](samples/README.md) — the fishing trip, annotated;
 - [`docs/design.md`](docs/design.md) — the as-built design: why the engine is a
   flat call stack, what `stay` rewrites, how a block's `cleanup/1` is guaranteed;
-- [`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md)
+- [`spec/fsl-js-ts.md`](https://framagit.org/elixip/finite-state-language/-/blob/main/spec/fsl-js-ts.md)
   — the cross-language contract, reconciled clause by clause with the TypeScript
   implementation, including the divergences kept on purpose.
 
 ## Licence
 
-[Apache-2.0](https://github.com/neutrino38/finite-state-language/blob/main/elixir/LICENSE). The code was extracted from
-[Elixip](https://github.com/neutrino38/elixip), which stays BUSL-1.1, and
+[Apache-2.0](https://framagit.org/elixip/finite-state-language/-/blob/main/elixir/LICENSE). The code was extracted from
+[Elixip](https://framagit.org/elixip/elixip), which stays BUSL-1.1, and
 relicensed so that both implementations of the language ship under one licence —
-see [`NOTICE`](https://github.com/neutrino38/finite-state-language/blob/main/elixir/NOTICE).
+see [`NOTICE`](https://framagit.org/elixip/finite-state-language/-/blob/main/elixir/NOTICE).

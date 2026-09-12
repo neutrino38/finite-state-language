@@ -13,7 +13,7 @@
   "excludePrivate": true,
   "categorizeByGroup": true,
   "navigationLinks": {
-    "Spec": "https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md",
-    "GitHub": "https://github.com/neutrino38/finite-state-language"
+    "Spec": "https://framagit.org/elixip/finite-state-language/-/blob/main/spec/fsl-js-ts.md",
+    "Framagit": "https://framagit.org/elixip/finite-state-language"
   }
 }

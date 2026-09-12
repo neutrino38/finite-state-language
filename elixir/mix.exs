@@ -9,7 +9,7 @@ defmodule FSL.MixProject do
   # that one half is a release behind, which is the thing this repository exists
   # to deny. So this package opened at 0.2.0, matching the sibling.
   @version "0.2.0"
-  @source_url "https://github.com/neutrino38/finite-state-language"
+  @source_url "https://framagit.org/elixip/finite-state-language"
 
   def project do
     [
@@ -62,7 +62,7 @@ defmodule FSL.MixProject do
       # which stays BUSL-1.1 — a source-available work may depend on a
       # permissive one, and the extraction does not travel the other way.
       licenses: ["Apache-2.0"],
-      links: %{"GitHub" => @source_url},
+      links: %{"Framagit" => @source_url},
       # `docs/design.md` and not `docs`: `docs/extraction-plan.md` is the record
       # of how this package was lifted out of Elixip, which belongs in the
       # repository and not in the tarball a consumer unpacks.
@@ -75,6 +75,15 @@ defmodule FSL.MixProject do
     [
       main: "FSL.Machine",
       source_url: @source_url,
+      # The repository holds two implementations of one language, so this
+      # package lives under `elixir/` while `@source_url` names the repository
+      # root. ex_doc cannot know that, and its default pattern would send every
+      # "source" link on hexdocs to `blob/main/lib/fsl/...` — a 404 for each
+      # function in the reference, and missing GitLab's `/-/` separator besides.
+      # The pattern below restores both, and pins the links to the release tag,
+      # so the code a reader lands on is the code that shipped in this version
+      # rather than whatever `main` has become since.
+      source_url_pattern: "#{@source_url}/-/blob/#{@version}/elixir/%{path}#L%{line}",
       # extraction-plan.md is deliberately NOT here: it is a historical document
       # whose links point into the sibling repositories, and ex_doc would lint it
       # as if it were reference material.

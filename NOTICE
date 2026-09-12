@@ -7,7 +7,7 @@ This repository holds two implementations of one language — `typescript/` and
 `elixir/` — and the specification that arbitrates between them, `spec/`.
 
 The Elixir implementation was extracted from Elixip
-(https://github.com/neutrino38/elixip) on 2026-09-12 and relicensed from
+(https://framagit.org/elixip/elixip) on 2026-09-12 and relicensed from
 BUSL-1.1 to Apache-2.0 by its copyright holder, so that both implementations
 ship under one licence.
 

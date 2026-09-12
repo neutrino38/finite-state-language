@@ -11,11 +11,11 @@ write, macro by macro — is the
 `FSL.Machine`; Elixip's [FSL.md][fsl-md] is the longer prose guide, which
 documents the language through its first binding. Both are the right place to
 start if you are writing a machine rather than changing one. The cross-language contract with the TypeScript
-implementation is [`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md).
+implementation is [`spec/fsl-js-ts.md`](https://framagit.org/elixip/finite-state-language/-/blob/main/spec/fsl-js-ts.md).
 
 > **History.** This file was `docs/design/DESIGN-FSL.md` in
-> [Elixip](https://github.com/neutrino38/elixip) until the extraction of
-> 2026-09-12 ([extraction-plan.md](https://github.com/neutrino38/finite-state-language/blob/main/elixir/docs/extraction-plan.md)). It moved here with the
+> [Elixip](https://framagit.org/elixip/elixip) until the extraction of
+> 2026-09-12 ([extraction-plan.md](https://framagit.org/elixip/finite-state-language/-/blob/main/elixir/docs/extraction-plan.md)). It moved here with the
 > code, and it is rewritten rather than transplanted: the language now calls back
 > into an embedding for everything it must not know, and that is a change in the
 > design and not only in the module names. What stayed behind — SIP's host, the
@@ -23,8 +23,8 @@ implementation is [`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-sta
 > described in Elixip's [`docs/design/DESIGN-FSL.md`][elixip-fsl], now a short
 > document about the binding.
 
-[fsl-md]: https://github.com/neutrino38/elixip/blob/master/FSL.md
-[elixip-fsl]: https://github.com/neutrino38/elixip/blob/master/docs/design/DESIGN-FSL.md
+[fsl-md]: https://framagit.org/elixip/elixip/-/blob/master/FSL.md
+[elixip-fsl]: https://framagit.org/elixip/elixip/-/blob/master/docs/design/DESIGN-FSL.md
 
 ---
 

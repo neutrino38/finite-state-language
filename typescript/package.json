@@ -8,7 +8,7 @@
   "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/neutrino38/finite-state-language.git",
+    "url": "git+https://framagit.org/elixip/finite-state-language.git",
     "directory": "typescript"
   },
   "keywords": [

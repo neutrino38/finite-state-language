@@ -67,7 +67,7 @@ defmodule FSL.Monitor do
 
   ## Example: what this looks like in a SIP application
 
-  [Elixip](https://github.com/neutrino38/elixip) is one embedding of FSL, where a
+  [Elixip](https://framagit.org/elixip/elixip) is one embedding of FSL, where a
   machine is a SIP scenario and a run is a call. Its host declares three columns
   of its own — the media the call negotiated, the media server it uses, and the
   destination it dialled — and its session verbs report commands such as

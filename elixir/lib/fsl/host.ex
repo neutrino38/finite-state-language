@@ -101,7 +101,7 @@ defmodule FSL.Host do
 
   ## A real-world example: SIP scenarios in Elixip
 
-  [Elixip](https://github.com/neutrino38/elixip) uses FSL to run SIP scenarios —
+  [Elixip](https://framagit.org/elixip/elixip) uses FSL to run SIP scenarios —
   calls, registrations, back-to-back user agents — and is the most demanding
   embedding written so far. Its `SIP.FSL.Host` is roughly 380 lines and
   implements eleven of the twelve:

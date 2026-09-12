@@ -61,7 +61,7 @@ defmodule FSL.Machine do
   waiting, sub-FSMs. What a state may *act on* — a socket, a dialog, a media
   plane — is an `FSL.Host` away, and a protocol binding usually wraps both in a
   facade of its own. `SIP.Scenario`, in
-  [Elixip](https://github.com/neutrino38/elixip), is `use FSL.Machine, host:
+  [Elixip](https://framagit.org/elixip/elixip), is `use FSL.Machine, host:
   SIP.FSL.Host, ctx_var: :sip_ctx` plus three session mixins, so a SIP scenario
   writes `send_INVITE` where the trip above writes `IO.puts`. The language
   cannot tell the difference, and that is the property the whole design is built

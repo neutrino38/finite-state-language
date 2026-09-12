@@ -34,7 +34,7 @@ If you can read that, you already speak FSL.
 ## Lineage: Elixip
 
 FSL began as the DSL at the heart of
-[**Elixip**](https://github.com/neutrino38/elixip), an Elixir SIP framework
+[**Elixip**](https://framagit.org/elixip/elixip), an Elixir SIP framework
 where call scenarios are written as explicit state machines — declared
 states, declared transitions, events collected per state, readability above
 all. That style proved itself describing real SIP call flows on the backend.

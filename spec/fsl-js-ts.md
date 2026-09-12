@@ -1,7 +1,7 @@
 # FSL for TypeScript / JavaScript — Language Specification
 
 Status: draft v0.3 — 2026-09-12 (post clause-by-clause reconciliation, §12)
-Lineage: [Elixip FSL](https://github.com/neutrino38/elixip/blob/master/FSL.md);
+Lineage: [Elixip FSL](https://framagit.org/elixip/elixip/-/blob/master/FSL.md);
 the Elixir implementation is now its own package —
 [`elixir/`](../elixir), hex `finite_state_language`, OTP app `:fsl`, modules
 `FSL.*`, design in [`elixir/docs/design.md`](../elixir/docs/design.md)
@@ -663,7 +663,7 @@ The names were reserved here before either dialect had code, for the reason the
 Node supervision of §9 is recorded: the one thing that must not happen twice is
 the naming. Elixir shipped the layer in its 1.5.0, and 0.2.0 ships it here with
 the two contracts — not only the two vocabularies — already together. See
-[`elixip/docs/design/DESIGN-SBB.md`](https://github.com/neutrino38/elixip/blob/master/docs/design/DESIGN-SBB.md),
+[`elixip/docs/design/DESIGN-SBB.md`](https://framagit.org/elixip/elixip/-/blob/master/docs/design/DESIGN-SBB.md),
 whose §10 holds the shared vocabulary table for both dialects.
 
 A **Service Building Block** is a reusable fragment of a state machine behind a

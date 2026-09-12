@@ -27,7 +27,7 @@ connected, failed, and every state in between.
   checked-in documentation cannot drift away from the machine.
 
 FSL is the TypeScript sibling of the DSL at the heart of
-[Elixip](https://github.com/neutrino38/elixip), an Elixir SIP framework
+[Elixip](https://framagit.org/elixip/elixip), an Elixir SIP framework
 where call scenarios are written as explicit, readable state machines.
 
 ## Install
@@ -236,9 +236,9 @@ checked-in diagram and the source disagree, and the two cannot drift.
 
 ## Documentation
 
-- [Language specification](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md)
+- [Language specification](https://framagit.org/elixip/finite-state-language/-/blob/main/spec/fsl-js-ts.md)
   — semantics, event model, design decisions. The spec is the arbiter.
-- [Software design](https://github.com/neutrino38/finite-state-language/blob/main/typescript/docs/design.md)
+- [Software design](https://framagit.org/elixip/finite-state-language/-/blob/main/typescript/docs/design.md)
   — how the runtime works inside.
 - API reference: `npm run docs` (typedoc) generates `docs/api`.
 - Start an instance with `{ debug: true }` for an Elixip-style

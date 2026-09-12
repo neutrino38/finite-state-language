@@ -235,7 +235,7 @@ defmodule FSL.Runner do
 
   ### Example: a SIP registrar
 
-  In [Elixip](https://github.com/neutrino38/elixip), a registration module calls
+  In [Elixip](https://framagit.org/elixip/elixip), a registration module calls
   this from `on_new_registration/3` with the dialog and the REGISTER it just
   received, and returns the `pid` as `{:accept, pid}`; the `ref` frees one slot of
   the concurrency quota when the scenario ends.

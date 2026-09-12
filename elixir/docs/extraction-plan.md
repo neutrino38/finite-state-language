@@ -4,7 +4,7 @@
 implementation of FSL arrives here.
 
 The language and its engine live today inside
-[Elixip](https://github.com/neutrino38/elixip), under
+[Elixip](https://framagit.org/elixip/elixip), under
 `apps/elixip2/lib/dsl/`, compiled with its SIP stack and unusable without it.
 The intent recorded in [`../README.md`](../README.md) is to extract them as a
 standalone Elixir package — *"generic states / transitions / `on_events` /
@@ -20,8 +20,8 @@ it. What is built today is described in Elixip's [`DESIGN-FSL.md`][design-fsl],
 and the language reference an integrator reads is [`FSL.md`][fsl-md]; this
 document assumes both and repeats neither.
 
-[design-fsl]: https://github.com/neutrino38/elixip/blob/master/docs/design/DESIGN-FSL.md
-[fsl-md]: https://github.com/neutrino38/elixip/blob/master/FSL.md
+[design-fsl]: https://framagit.org/elixip/elixip/-/blob/master/docs/design/DESIGN-FSL.md
+[fsl-md]: https://framagit.org/elixip/elixip/-/blob/master/FSL.md
 
 > **Reading the paths.** Every `apps/…`, `docs/…`, `scenarios/…` and
 > `LICENSE*.md` path below is in the **Elixip** repository, which is where the

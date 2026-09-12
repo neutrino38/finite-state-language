@@ -15,13 +15,13 @@ with a migration, never a tidying.
 The first release of this package, numbered to match the TypeScript
 implementation rather than to count this package's own releases. The two honour
 the same *contract*, reconciled clause by clause in
-[`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md)
+[`spec/fsl-js-ts.md`](https://framagit.org/elixip/finite-state-language/-/blob/main/spec/fsl-js-ts.md)
 §12 — the SBB return shape, the declared vocabulary, the block-level bound,
 `resume:`, the inter-machine event names.
 
 ### Added — the first release
 
-Extracted from [Elixip](https://github.com/neutrino38/elixip) on 2026-09-12,
+Extracted from [Elixip](https://framagit.org/elixip/elixip) on 2026-09-12,
 where the language and its engine had lived inside a SIP stack since 2024, and
 **relicensed from BUSL-1.1 to Apache-2.0** so that the Elixir and TypeScript
 implementations ship under one licence (see `NOTICE`).
@@ -132,6 +132,6 @@ binding meets exactly these:
 
 The reconciliation with the TypeScript implementation left two differences
 standing, both recorded in
-[`spec/fsl-js-ts.md`](https://github.com/neutrino38/finite-state-language/blob/main/spec/fsl-js-ts.md)
+[`spec/fsl-js-ts.md`](https://framagit.org/elixip/finite-state-language/-/blob/main/spec/fsl-js-ts.md)
 §12 rather than resolved: the pending queue, which the BEAM's selective receive
 makes unnecessary here, and a few details of `stay` and `goto back`.
