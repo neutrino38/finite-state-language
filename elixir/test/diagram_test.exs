@@ -249,7 +249,17 @@ defmodule FSL.DiagramTest do
     # Elixip's `elixipp --log-sequence` sets `:fsl`; a binding that would rather
     # keep it with the rest of its configuration says so once.
     setup do
+      # A machine that reaches a terminal with the journal on FLUSHES it, to a
+      # file named after the run, in the working directory — so these tests
+      # produce diagrams as a side effect of observing the flag, and clean them
+      # up after themselves.
+      #
+      # By deleting and NOT by `File.cd!`: the working directory is the VM's,
+      # not the process's, so chdir-ing here would move it under every
+      # concurrently running async test — including one that loads a fixture by
+      # relative path.
       on_exit(fn ->
+        Enum.each(Path.wildcard("FSL.DiagramTest.Quiet_*.puml"), &File.rm/1)
         Application.delete_env(:fsl, :log_sequence)
         Application.delete_env(:fsl, :log_sequence_app)
         Application.delete_env(:some_binding, :log_sequence)

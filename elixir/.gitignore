@@ -8,3 +8,8 @@ erl_crash.dump
 *.beam
 /config/*.secret.exs
 .elixir_ls/
+
+# Sequence diagrams a run flushes into the working directory. A test that turns
+# the journal on should chdir to a temp dir first; this is the safety net.
+*.puml
+*.mmd
