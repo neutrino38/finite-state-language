@@ -1008,9 +1008,12 @@ What that costs, all of it in P4 (§7) except the last line:
 - `package: [licenses: ["Apache-2.0"]]` in the FSL `mix.exs`. `mix sbom.cyclonedx`
   reads that key, so the SBoM Elixip generates will correctly show the
   dependency as Apache-2.0 while every elixip component stays BUSL-1.1;
-- `NOTICE` naming IVèS as the copyright holder and recording that the code was
-  extracted from Elixip, which is what makes the provenance readable rather than
-  merely legal;
+- `NOTICE` naming the copyright holder and recording that the code was extracted
+  from Elixip, which is what makes the provenance readable rather than merely
+  legal. **This line said "IVèS" and was wrong** — corrected 2026-09-12, when P4
+  wrote the file: the holder is **Emmanuel Buu / La Tribuu**, which is the
+  Licensor named by Elixip's own `LICENSE.md`, and the copyright of extracted
+  code follows the work it came from;
 - a paragraph in **both** `LICENSE.md` and `LICENSE_fr.md` at **Elixip's**
   root, saying that the FSL engine was extracted and relicensed and where it now
   lives. The English text is the binding one and the French translation tracks

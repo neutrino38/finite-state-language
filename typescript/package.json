@@ -2,6 +2,7 @@
   "name": "finite-state-language",
   "version": "0.2.0",
   "description": "FSL — a tiny, readable finite-state language for stateful communication frontends",
+  "author": "Emmanuel Buu / La Tribuu <latribuu@proton.me>",
   "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,
@@ -24,7 +25,9 @@
   },
   "files": [
     "dist",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE"
   ],
   "exports": {
     ".": {

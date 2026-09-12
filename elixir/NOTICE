@@ -1,5 +1,5 @@
 FSL for Elixir — the Finite State Language
-Copyright 2025-2026 Emmanuel Buu / La Tribuu
+Copyright 2024-2026 Emmanuel Buu / La Tribuu
 
 This product includes software developed as part of Elixip
 (https://github.com/neutrino38/elixip).
@@ -16,6 +16,14 @@ work may depend on a permissive one, and Elixip now consumes this package as an
 ordinary dependency. Nothing here is subject to BUSL-1.1, and no BUSL-1.1 term —
 including the Additional Use Grant and the competing-product restriction — applies
 to it.
+
+The copyright range starts in 2024 because part of what was extracted — the
+context a state machine keeps about itself — is that old in Elixip's history,
+while the language around it dates from 2026.
+
+Most commits of both repositories carry the author address
+emmanuel.buu@ives.fr, a work address of the person named above. The copyright
+holder is as stated above.
 
 The provenance is recorded because it is readable, not merely because it is
 required: the design of what is here, and of every seam that made the extraction
