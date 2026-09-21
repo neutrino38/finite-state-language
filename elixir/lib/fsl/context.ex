@@ -100,23 +100,30 @@ defmodule FSL.Context do
   validates about it.
   """
   @spec put(t(), atom(), term()) :: t()
-  def put(ctx, :currentstate, value) when is_atom(value), do: Map.put(ctx, :currentstate, value)
-  def put(ctx, :laststate, value) when is_atom(value), do: Map.put(ctx, :laststate, value)
-  def put(ctx, :errorreason, value) when is_binary(value), do: Map.put(ctx, :errorreason, value)
-  def put(ctx, :lasterr, value), do: Map.put(ctx, :lasterr, value)
-  def put(ctx, :appdata, value) when is_map(value), do: Map.put(ctx, :appdata, value)
+  def put(ctx, key, value), do: snapshot(do_put(ctx, key, value))
+
+  defp do_put(ctx, :currentstate, value) when is_atom(value),
+    do: Map.put(ctx, :currentstate, value)
+
+  defp do_put(ctx, :laststate, value) when is_atom(value), do: Map.put(ctx, :laststate, value)
+
+  defp do_put(ctx, :errorreason, value) when is_binary(value),
+    do: Map.put(ctx, :errorreason, value)
+
+  defp do_put(ctx, :lasterr, value), do: Map.put(ctx, :lasterr, value)
+  defp do_put(ctx, :appdata, value) when is_map(value), do: Map.put(ctx, :appdata, value)
 
   # nil means "this FSM has no parent and runs standalone", which is what makes
   # the parent notifications no-ops rather than a special case at each call site.
-  def put(ctx, :parent_pid, nil), do: Map.put(ctx, :parent_pid, nil)
-  def put(ctx, :parent_pid, value) when is_pid(value), do: Map.put(ctx, :parent_pid, value)
+  defp do_put(ctx, :parent_pid, nil), do: Map.put(ctx, :parent_pid, nil)
+  defp do_put(ctx, :parent_pid, value) when is_pid(value), do: Map.put(ctx, :parent_pid, value)
 
-  def put(_ctx, key, value) when key in @keys do
+  defp do_put(_ctx, key, value) when key in @keys do
     raise ArgumentError,
           "FSL.Context: #{inspect(value)} is not a valid #{inspect(key)}"
   end
 
-  def put(_ctx, key, _value) do
+  defp do_put(_ctx, key, _value) do
     raise ArgumentError,
           "FSL.Context.put/3 writes only #{inspect(@keys)}, not #{inspect(key)}"
   end
@@ -136,7 +143,8 @@ defmodule FSL.Context do
 
   @doc "Store an application-defined value in the `appdata` map."
   @spec appdata_set(t(), term(), term()) :: t()
-  def appdata_set(ctx, key, value), do: Map.put(ctx, :appdata, Map.put(ctx.appdata, key, value))
+  def appdata_set(ctx, key, value),
+    do: snapshot(Map.put(ctx, :appdata, Map.put(ctx.appdata, key, value)))
 
   @doc false
   # `@after_compile FSL.Context` in a binding's context module.
@@ -174,6 +182,62 @@ defmodule FSL.Context do
   def put(ctx, []), do: ctx
 
   def put(ctx, [{prop, value} | rest]), do: ctx |> put(prop, value) |> put(rest)
+
+  # ── The photo ───────────────────────────────────────────────────────────────
+
+  @snapshot_key :fsl_context_snapshot
+
+  @doc """
+  Record `ctx` as the live context of this process, and return it unchanged.
+
+  The context is a **stack variable**: every write rebinds it, so a `rescue` or
+  `catch` clause — which sees the bindings as they were when the `try` was
+  entered — holds the context of the *start* of the state, not the one the state
+  had built by the time it raised. Everything that state had allocated is
+  invisible to the teardown that follows: in the SIP binding, an exception in the
+  state that set a call up left both legs standing and the media session
+  allocated.
+
+  So the live context is also kept off the stack. Every funnel that rewrites it
+  calls this — `put/3` and `appdata_set/3` here, and a binding's own setter over
+  there (`SIP.Context.set/3`) — and `state` takes one on entry, so the photo is
+  never older than what a `rescue` clause holds. The clause reads it back with
+  `latest/1`.
+
+  One photo per process, which is the right grain: a machine instance is a
+  process, a service building block runs in its host's process and shares its
+  context — and therefore its photo — and a child machine has one of its own.
+  """
+  @spec snapshot(t()) :: t()
+  def snapshot(ctx) do
+    Process.put(@snapshot_key, ctx)
+    ctx
+  end
+
+  @doc """
+  The most recent context this process wrote, or `ctx` when there is none.
+
+  Called first thing in the `rescue` and `catch` clauses of `state`, where `ctx`
+  has gone back to what it was when the state was entered. The photo is returned
+  only when it belongs to the same context struct, so a machine that built a
+  context of another shape in passing cannot hand it back here.
+  """
+  @spec latest(t()) :: t()
+  def latest(ctx) do
+    photo = Process.get(@snapshot_key)
+
+    if is_struct(photo) and is_struct(ctx, photo.__struct__), do: photo, else: ctx
+  end
+
+  @doc """
+  Drop the photo. Called by the runner when an instance is done; a test that runs
+  two machines in one process calls it in between.
+  """
+  @spec forget() :: :ok
+  def forget do
+    Process.delete(@snapshot_key)
+    :ok
+  end
 
   @doc """
   Inject the five generic context macros into a scenario: `ctx_set`, `ctx_get`,

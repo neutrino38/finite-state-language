@@ -69,4 +69,109 @@ defmodule FSL.ResilienceTest do
   test "an exception is still reported as one" do
     assert FSL.Runner.run_instance(Raising) == {:error, "exception!"}
   end
+
+  # ── What the teardown is handed ────────────────────────────────────────────
+  #
+  # Ending is only half of it: the teardown releases what the context says the
+  # machine holds, and a `rescue` clause sees the bindings of the moment the
+  # `try` was entered — so what the state allocated BEFORE raising was invisible
+  # to it. In the SIP binding that meant an exception in the state that set a
+  # call up left both legs standing and the media session allocated (production,
+  # 2026-09-21).
+
+  defmodule AllocatingThenRaising do
+    use FSL.Machine
+
+    config(label: "resilience")
+
+    state initial_state do
+      appdata_set(:allocated, :a_resource)
+      raise "boom"
+      scenario_success("unreachable")
+    end
+
+    def cleanup(ctx), do: send(self(), {:teardown_saw, FSL.Context.appdata_get(ctx, :allocated)})
+  end
+
+  defmodule AllocatingThenExiting do
+    use FSL.Machine
+
+    config(label: "resilience")
+
+    state initial_state do
+      appdata_set(:allocated, :a_resource)
+
+      dead = spawn(fn -> :ok end)
+      ref = Process.monitor(dead)
+      receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+
+      GenServer.call(dead, :getdialogid)
+
+      scenario_success("unreachable")
+    end
+
+    def cleanup(ctx), do: send(self(), {:teardown_saw, FSL.Context.appdata_get(ctx, :allocated)})
+  end
+
+  test "the teardown is handed what the raising state had allocated" do
+    assert FSL.Runner.run_instance(AllocatingThenRaising) == {:error, "exception!"}
+    assert_received {:teardown_saw, :a_resource}
+  end
+
+  test "…and the same for a state that exits" do
+    assert FSL.Runner.run_instance(AllocatingThenExiting) == {:error, "exit!"}
+    assert_received {:teardown_saw, :a_resource}
+  end
+
+  # The counter-case, which is what makes the two above mean something: a
+  # machine that allocates in one state and raises in the NEXT one has always
+  # worked, because the context the second state was entered with already
+  # carried the allocation. A fix that only covered the easy case would still
+  # pass this one, and fail the two above.
+  defmodule AllocatingThenRaisingLater do
+    use FSL.Machine
+
+    config(label: "resilience")
+
+    state initial_state do
+      appdata_set(:allocated, :a_resource)
+      goto(exploding, "allocated")
+    end
+
+    state exploding do
+      raise "boom"
+      scenario_success("unreachable")
+    end
+
+    def cleanup(ctx), do: send(self(), {:teardown_saw, FSL.Context.appdata_get(ctx, :allocated)})
+  end
+
+  test "a state that raises one state after the allocation tears down the same way" do
+    assert FSL.Runner.run_instance(AllocatingThenRaisingLater) == {:error, "exception!"}
+    assert_received {:teardown_saw, :a_resource}
+  end
+
+  # The photo is per process, and a machine that has ended leaves none behind: a
+  # second machine raising before it writes anything must not be handed the
+  # first one's context.
+  defmodule RaisingStraightAway do
+    use FSL.Machine
+
+    config(label: "resilience")
+
+    state initial_state do
+      raise "boom"
+      scenario_success("unreachable")
+    end
+
+    def cleanup(ctx), do: send(self(), {:teardown_saw, FSL.Context.appdata_get(ctx, :allocated)})
+  end
+
+  test "a machine run after another one is not handed its predecessor's context" do
+    assert FSL.Runner.run_instance(AllocatingThenRaising) == {:error, "exception!"}
+    assert_received {:teardown_saw, :a_resource}
+
+    assert FSL.Runner.run_instance(RaisingStraightAway) == {:error, "exception!"}
+    assert_received {:teardown_saw, nil}
+  end
 end

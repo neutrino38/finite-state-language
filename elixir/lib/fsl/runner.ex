@@ -882,6 +882,11 @@ defmodule FSL.Runner do
 
     notify_parent_exit(ctx, outcome, reason)
 
+    # This instance is done with its context. Left behind, the photo would be the
+    # one a machine run next in this process — a test suite does that — reads back
+    # from a `rescue` clause before writing one of its own.
+    FSL.Context.forget()
+
     case FSL.Journal.flush() do
       {:ok, path} -> Logger.info("Sequence diagram written to #{path}")
       {:error, reason} -> Logger.warning("Could not write sequence diagram: #{inspect(reason)}")
