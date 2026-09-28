@@ -33,6 +33,12 @@ defmodule FSL.Diagram.Mermaid do
   (`succeeded: …` / `failed: …`), where PlantUML tints it green or pink. Same
   information, one less channel.
 
+  In a traced run (`:message` events, see `FSL.Diagram`) the same holds for the
+  messages: a request is solid (`->>`), a reply dotted (`-->>`), and a
+  repetition, which PlantUML greys, is drawn with the open arrowhead Mermaid
+  keeps for asynchronous messages (`-)` / `--)`). A protocol command is a note
+  over the local lane, since Mermaid has no hexagon note.
+
   ## Escaping
 
   Message text runs to the end of the line in Mermaid, so a `:` inside a label
@@ -51,11 +57,19 @@ defmodule FSL.Diagram.Mermaid do
   @impl FSL.Diagram
   @spec render([map()], map()) :: String.t()
   def render(events, meta) when is_list(events) and is_map(meta) do
+    lanes = FSL.Diagram.message_lanes(events)
+
+    rctx = %{
+      meta: meta,
+      traced?: lanes != [],
+      aliases: Map.new(lanes, &{&1.lane, &1.alias})
+    }
+
     [
-      header(meta),
+      header(meta, lanes),
       "sequenceDiagram",
-      participants(meta, events),
-      body(events)
+      participants(meta, events, lanes),
+      body(events, rctx)
     ]
     |> List.flatten()
     |> Enum.join("\n")
@@ -75,7 +89,7 @@ defmodule FSL.Diagram.Mermaid do
 
   # ── Header (Mermaid comments are `%%` and must be on their own line) ────────
 
-  defp header(meta) do
+  defp header(meta, lanes) do
     config = Map.get(meta, :config, [])
 
     [
@@ -84,15 +98,34 @@ defmodule FSL.Diagram.Mermaid do
       "%% Configuration (secrets masked):",
       Enum.map(config, fn {key, value} ->
         "%%   #{key}: #{FSL.Diagram.mask(key, value)}"
+      end),
+      lane_comments(lanes)
+    ]
+  end
+
+  defp lane_comments([]), do: []
+
+  defp lane_comments(lanes) do
+    [
+      "%% Peers (one per conversation):",
+      Enum.map(lanes, fn lane ->
+        "%%   #{lane.alias}: #{lane.label} — #{FSL.Diagram.lane_name(lane.lane)}"
       end)
     ]
   end
 
   # ── Participants ────────────────────────────────────────────────────────────
 
-  defp participants(meta, events) do
+  defp participants(meta, events, lanes) do
     {local, peer} = FSL.Diagram.lane_labels(meta)
-    base = [participant(@local, local), participant(@remote, peer)]
+
+    peers =
+      case lanes do
+        [] -> [participant(@remote, peer)]
+        lanes -> Enum.map(lanes, &participant(&1.alias, &1.label))
+      end
+
+    base = [participant(@local, local) | peers]
 
     # Only declare the media lane when the run actually touched media, so a
     # machine with no media plane gets a two-lane diagram.
@@ -106,55 +139,84 @@ defmodule FSL.Diagram.Mermaid do
 
   # ── Body ────────────────────────────────────────────────────────────────────
 
-  defp body(events) do
+  defp body(events, rctx) do
     {lines, _state} =
       Enum.reduce(events, {[], nil}, fn event, {acc, current} ->
-        {rendered, next} = render_event(event, current)
+        {rendered, next} = render_event(event, current, rctx)
         {acc ++ rendered, next}
       end)
 
     lines
   end
 
+  # A message that went over the wire: an arrow on the lane of its conversation.
+  defp render_event(%{kind: :message} = msg, current, rctx) do
+    lane = Map.get(rctx.aliases, Map.get(msg, :lane), @remote)
+    {from, to} = if Map.get(msg, :dir) == :in, do: {lane, @local}, else: {@local, lane}
+
+    {["    #{from}#{arrow(msg)}#{to}: #{label(msg, Map.get(msg, :label), rctx)}"], current}
+  end
+
   # A media command: dotted, towards the media lane.
-  defp render_event(%{kind: :command, type: :media, name: name}, current) do
-    {["    #{@local}-->>#{@media}: #{escape(FSL.Diagram.media_label(name))}"], current}
+  defp render_event(%{kind: :command, type: :media, name: name} = event, current, rctx) do
+    {["    #{@local}-->>#{@media}: #{label(event, FSL.Diagram.media_label(name), rctx)}"],
+     current}
   end
 
   # A command that went nowhere — a timer armed, a database read, a block
-  # entered: a note, because there is no lane it travelled to.
-  defp render_event(%{kind: :command, type: type, name: name}, current) do
-    case FSL.Diagram.lane(type) do
-      :local ->
-        {["    Note over #{@local}: #{escape(name)}"], current}
+  # entered: a note, because there is no lane it travelled to. A protocol
+  # command is a note too in a traced run, beside the arrows it produced.
+  defp render_event(%{kind: :command, type: type, name: name} = event, current, rctx) do
+    case {FSL.Diagram.lane(type), rctx.traced?} do
+      {:peer, false} ->
+        {["    #{@local}->>#{@remote}: #{label(event, FSL.Diagram.command_label(name), rctx)}"],
+         current}
 
-      _peer ->
-        {["    #{@local}->>#{@remote}: #{escape(FSL.Diagram.command_label(name))}"], current}
+      _note ->
+        {["    Note over #{@local}: #{label(event, name, rctx)}"], current}
     end
   end
 
   # The first transition: entering the initial state.
-  defp render_event(%{kind: :transition, to: to}, nil) do
-    {["    Note over #{@local}: #{escape(to)}"], to}
+  defp render_event(%{kind: :transition, to: to} = event, nil, rctx) do
+    {["    Note over #{@local}: #{label(event, to, rctx)}"], to}
   end
 
-  defp render_event(%{kind: :transition, to: to, event: event, type: type}, from) do
+  defp render_event(%{kind: :transition, to: to, event: event, type: type} = t, from, rctx) do
     labelled? = FSL.Diagram.labelled?(event)
 
     inbound =
-      case {FSL.Diagram.lane(type), labelled?} do
-        {:media, true} -> ["    #{@media}-->>#{@local}: #{escape(event)}"]
-        {:peer, true} -> ["    #{@remote}->>#{@local}: #{escape(event)}"]
+      case {FSL.Diagram.lane(type), labelled?, rctx.traced?} do
+        {:media, true, _} -> ["    #{@media}-->>#{@local}: #{label(t, event, rctx)}"]
+        {:peer, true, false} -> ["    #{@remote}->>#{@local}: #{label(t, event, rctx)}"]
         _otherwise -> []
       end
 
-    {inbound ++ ["    Note over #{@local}: #{escape(from)} -> #{escape(to)}"], to}
+    {inbound ++ ["    Note over #{@local}: #{label(t, "#{from} -> #{to}", rctx)}"], to}
   end
 
-  defp render_event(%{kind: :terminal, outcome: outcome, reason: reason}, current) do
-    label = if reason in ["", nil], do: to_string(outcome), else: "#{outcome}: #{reason}"
-    {["    Note over #{@local}: #{escape(label)}"], current}
+  defp render_event(%{kind: :terminal, outcome: outcome, reason: reason} = event, current, rctx) do
+    text = if reason in ["", nil], do: to_string(outcome), else: "#{outcome}: #{reason}"
+    {["    Note over #{@local}: #{label(event, text, rctx)}"], current}
   end
+
+  # A kind this renderer does not know is skipped rather than failing the whole
+  # diagram.
+  defp render_event(_event, current, _rctx), do: {[], current}
+
+  # Solid for a request, dotted for a reply, open arrowhead for a repetition.
+  defp arrow(msg) do
+    case {Map.get(msg, :reply, false), Map.get(msg, :repeat, false)} do
+      {false, false} -> "->>"
+      {true, false} -> "-->>"
+      {false, true} -> "-)"
+      {true, true} -> "--)"
+    end
+  end
+
+  # The stamp, then the text, escaped as one.
+  defp label(event, text, rctx),
+    do: escape(FSL.Diagram.stamp(event, rctx.meta) <> to_string(text))
 
   # ── Escaping ────────────────────────────────────────────────────────────────
 

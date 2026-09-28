@@ -305,6 +305,8 @@ machine needs, so a machine with no protocol runs with no host written.
 | `c:FSL.Host.finalize/1` | teardown | the B2BUA legs, then the media (§4.3) |
 | `c:FSL.Host.account/2` | every report | who this run serves (§7) |
 | `c:FSL.Host.diagram_renderer/0` | journal flush | not implemented: the shipped renderer is the right one |
+| `c:FSL.Host.journal_started/1` | journal start, in the machine's process | watch the run's dialogs; record the request a server instance was spawned for |
+| `c:FSL.Host.journal_collect/0` | journal flush and clear | hand over the SIP messages its transactions recorded for the run (§7.2) |
 
 `FSL.Host.hook/4` is how the language calls one. It tries `function_exported?/3`
 first and falls back to `Code.ensure_compiled/1`, in that order and not the
@@ -387,7 +389,10 @@ path.
 
 `loop/4` applies `__state_<name>/1`, matches the descriptor, resolves the
 pseudo-targets, logs the transition, reports it to `FSL.Monitor` and to the
-sequence journal, then tail-calls itself on the next state. Four descriptors are
+sequence journal, then tail-calls itself on the next state. Between running the
+state and matching its descriptor it asks whether the journal should start, with
+the context the state handed back — so a `debug` flag set in a state starts the
+journal at the transition that follows it (§7.2). Four descriptors are
 error paths that end the machine cleanly rather than crashing it:
 
 | Situation | Outcome |
@@ -676,7 +681,38 @@ Two renderers ship behind the `FSL.Diagram` behaviour — `render/2` and
 The journal is turned on by `config :fsl, :log_sequence, true`, or by the
 binding's own app when it named one with `config :fsl, :log_sequence_app,
 :my_app` — a binding usually keeps all of its configuration in one namespace and
-should not have to split one flag out of it.
+should not have to split one flag out of it. A context field `debug` turns it on
+for one machine; the runner asks after every state, so the flag works when set
+mid-run, and the journal starts at most once.
+
+**A clock on every event.** Each event carries `:at` (monotonic microseconds)
+and the metadata `:t0`; the renderers prefix every label with `+Nms`. The clock
+is what makes the next point possible: events recorded by different processes
+can only be interleaved by time.
+
+**Events recorded elsewhere.** What a protocol actually put on the wire does not
+pass through the machine's process — in SIP, a transaction process sends and
+receives it. Two optional host callbacks carry it in without FSL learning the
+protocol: `c:FSL.Host.journal_started/1`, called in the machine's process when
+the journal starts, lets the binding begin recording for this run;
+`c:FSL.Host.journal_collect/0` hands the recorded events over at `flush/0`,
+which merges them by `:at`, and at `clear/0`, which drops them — the binding's
+store is drained either way. `FSL.Journal.record/1` takes an event the binding
+built in the machine's process directly.
+
+**The `:message` kind.** What the binding hands over is a `:message` event: a
+direction, a `lane` (the conversation — SIP's Call-ID), an optional `party` and
+`peer` to label it, a ready-made `label`, and two booleans, `reply` (dashed) and
+`repeat` (dimmed). The binding decides what each field says; the renderer draws
+it. One such event switches a renderer to **traced mode**: one peer lane per
+conversation instead of the single peer lane, protocol commands as notes beside
+the arrows they produced, protocol transitions without an arrow of their own.
+Without one, the rendering is unchanged. A lane per conversation is not SIP —
+an XMPP or Matrix binding has conversations too — which is why the kind lives
+here and a binding does not ship a renderer of its own to get it.
+
+A renderer skips an event of a kind it does not know, so a journal richer than
+its renderer degrades to a diagram with less in it, never to a crash.
 
 **Three lanes, and the rule is by exclusion:**
 

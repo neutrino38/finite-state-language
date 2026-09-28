@@ -15,7 +15,7 @@ defmodule FSL.MixProject do
   # of a number. 0.2.1 is such a fix — a rule of Elixir about `rescue` and the
   # stack, which the TypeScript implementation cannot have. Minor and major stay
   # in step.
-  @version "0.2.1"
+  @version "0.3.0"
   @source_url "https://framagit.org/elixip/finite-state-language"
 
   def project do

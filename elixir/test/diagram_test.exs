@@ -106,7 +106,11 @@ defmodule FSL.DiagramTest do
     SequenceJournal.record_transition(:answered, "200 OK", :sip)
     SequenceJournal.record_transition(:succeeded, "done", :sip)
 
-    assert SequenceJournal.events() == [
+    events = SequenceJournal.events()
+    assert Enum.all?(events, &is_integer(&1.at))
+    assert is_integer(SequenceJournal.meta().t0)
+
+    assert Enum.map(events, &Map.delete(&1, :at)) == [
              %{kind: :transition, to: :initial_state, event: "start", type: nil},
              %{kind: :command, type: :sip, name: "send_INVITE"},
              %{kind: :transition, to: :answered, event: "200 OK", type: :sip},
@@ -174,9 +178,10 @@ defmodule FSL.DiagramTest do
     content = File.read!(path)
     assert content =~ "@startuml"
     assert content =~ "@enduml"
-    assert content =~ "local -> peer : INVITE"
-    assert content =~ "local -[#DarkOrange]> ms : connect"
-    assert content =~ "note over local : initial_state -> calling"
+    # A journal run carries a clock, so every label is stamped.
+    assert content =~ ~r/local -> peer : \+\d+ms INVITE/
+    assert content =~ ~r/local -\[#DarkOrange\]> ms : \+\d+ms connect/
+    assert content =~ ~r/note over local : \+\d+ms initial_state -> calling/
     assert content =~ "passwd: ****"
     refute content =~ "s3cret"
 

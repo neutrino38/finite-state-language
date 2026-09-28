@@ -276,9 +276,11 @@ defmodule FSL.Runner do
     :ok
   end
 
-  # Start the per-instance PlantUML sequence journal when --log-sequence is set on
-  # the CLI (Application env) or when the scenario enabled its debug flag. No-op
-  # otherwise — the journal recording helpers are then free.
+  # Start the per-instance sequence journal when --log-sequence is set on the CLI
+  # (Application env) or when the scenario enabled its debug flag — in its
+  # `config` block, or in a state, which is why the loop asks again after every
+  # state. No-op otherwise, and once started: the journal recording helpers are
+  # then free.
   defp maybe_start_sequence_journal(module, ctx) do
     # Two switches:
     #
@@ -289,16 +291,30 @@ defmodule FSL.Runner do
     #   * `debug`, a field a binding's context may define (SIP's does) and FSL's
     #     does not. Read tolerantly: a machine whose binding has no such field
     #     simply never turns the journal on that way.
-    if journal_enabled?() or Map.get(ctx, :debug, false) do
+    if not FSL.Journal.enabled?() and (journal_enabled?() or Map.get(ctx, :debug, false)) do
       FSL.Journal.start(%{
         scenario: scenario_label(module),
         pid: inspect(self()),
         config: module.__scenario_config__()
       })
+
+      # What the binding records outside this process starts here (c:FSL.Host.journal_started/1).
+      FSL.Host.call(module, :journal_started, [ctx], :ok)
     end
 
     :ok
   end
+
+  # The context a state handed back, whatever descriptor it came in: every shape
+  # loop/4 matches carries it last. nil for a malformed one.
+  defp descriptor_ctx(desc) when is_tuple(desc) and tuple_size(desc) > 0 do
+    case elem(desc, tuple_size(desc) - 1) do
+      ctx when is_map(ctx) -> ctx
+      _other -> nil
+    end
+  end
+
+  defp descriptor_ctx(_desc), do: nil
 
   # `:log_sequence` under `:fsl`, or under whichever app a binding named:
   #
@@ -326,7 +342,10 @@ defmodule FSL.Runner do
     # and one the per-state try/catch is transparent to (it catches :exit and
     # exceptions, never :throw). Caught here, at the root, it is re-applied as if
     # this state had written it: same report, same finalize, same verdict.
-    case run_state(module, fun, ctx) do
+    result = run_state(module, fun, ctx)
+    maybe_start_sequence_journal(module, descriptor_ctx(result) || ctx)
+
+    case result do
       {:goto, :next, desc, type, ctx2} ->
         next = next_state(state_name, states)
         log_transition(state_name, next, desc)
