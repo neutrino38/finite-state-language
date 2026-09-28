@@ -17,7 +17,13 @@ defmodule FSL.MixProject do
   # recorded in §12.4b. A feature of this implementation alone is a MINOR here,
   # and the sibling skips that number rather than reuse it — 0.4.0 is one:
   # turning the journal on in a live run, and `c:FSL.Host.journal_output/3`.
-  @version "0.4.0"
+  #
+  # 0.4.1 is a PATCH that adds a callback, and that is a ruling, not an oversight
+  # (2026-09-28): `c:FSL.Host.journal_events/2` completes 0.4.0's hand-off of a
+  # finished journal rather than opening a feature of its own — the same moment,
+  # the same host, handed the events instead of a document — and it is optional,
+  # so no binding written against 0.4.0 changes behaviour.
+  @version "0.4.1"
   @source_url "https://framagit.org/elixip/finite-state-language"
 
   def project do

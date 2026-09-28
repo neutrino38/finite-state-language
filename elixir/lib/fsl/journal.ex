@@ -41,11 +41,16 @@ defmodule FSL.Journal do
   flushes it as usual. A machine outside an `on_events` sees the message at its
   next wait.
 
-  ## Where the document goes
+  ## Where the journal goes
 
-  To a file named by the renderer, in the working directory — unless the host
-  answers `c:FSL.Host.journal_output/3`, which receives the document and decides.
-  A server that keeps diagrams in memory for an operator does it there.
+  At `flush/0`, the host is offered the journal itself first:
+  `c:FSL.Host.journal_events/2` receives the merged events and the metadata,
+  and a host that keeps them — a server holding journals for its operators, to
+  be drawn by whoever reads them — takes them there. Nothing is rendered then.
+
+  Otherwise the journal is rendered, and the document goes to a file named by
+  the renderer, in the working directory, unless the host answers
+  `c:FSL.Host.journal_output/3`, which receives the document and decides.
 
   ## Time
 
@@ -192,22 +197,30 @@ defmodule FSL.Journal do
         meta = Process.get(@meta_key)
         module = Process.get(:scenario_module)
         events = Enum.sort_by(events() ++ collect(module), &Map.get(&1, :at, 0))
-
-        # The scenario's own host may name a renderer of its own; the default is
-        # the PlantUML one this library ships (`c:FSL.Host.diagram_renderer/0`).
-        renderer =
-          FSL.Host.call(module, :diagram_renderer, [], FSL.Diagram.PlantUML)
-
-        content = renderer.render(events, meta)
         clear()
 
-        # Where the document goes is the host's to say (c:FSL.Host.journal_output/3);
-        # a file named by the renderer, in the working directory, by default.
-        case FSL.Host.call(module, :journal_output, [content, meta, renderer], :default) do
-          :default -> write_file(renderer.filename(meta), content)
+        # A host that keeps journals takes the events themselves, and then nothing
+        # is rendered here (c:FSL.Host.journal_events/2). Otherwise, a document.
+        case FSL.Host.call(module, :journal_events, [events, meta], :default) do
+          :default -> render_and_output(module, events, meta)
           {:ok, where} -> {:ok, where}
           {:error, reason} -> {:error, reason}
         end
+    end
+  end
+
+  defp render_and_output(module, events, meta) do
+    # The scenario's own host may name a renderer of its own; the default is
+    # the PlantUML one this library ships (`c:FSL.Host.diagram_renderer/0`).
+    renderer = FSL.Host.call(module, :diagram_renderer, [], FSL.Diagram.PlantUML)
+    content = renderer.render(events, meta)
+
+    # Where the document goes is the host's to say (c:FSL.Host.journal_output/3);
+    # a file named by the renderer, in the working directory, by default.
+    case FSL.Host.call(module, :journal_output, [content, meta, renderer], :default) do
+      :default -> write_file(renderer.filename(meta), content)
+      {:ok, where} -> {:ok, where}
+      {:error, reason} -> {:error, reason}
     end
   end
 

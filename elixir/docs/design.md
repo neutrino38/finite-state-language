@@ -308,7 +308,8 @@ machine needs, so a machine with no protocol runs with no host written.
 | `c:FSL.Host.diagram_renderer/0` | journal flush | not implemented: the shipped renderer is the right one |
 | `c:FSL.Host.journal_started/1` | journal start, in the machine's process | watch the run's dialogs; record the request a server instance was spawned for |
 | `c:FSL.Host.journal_collect/0` | journal flush and clear | hand over the SIP messages its transactions recorded for the run (§7.2) |
-| `c:FSL.Host.journal_output/3` | journal flush | hand the diagram to the application's store (kelixip keeps it in memory), else a file |
+| `c:FSL.Host.journal_events/2` | journal flush, first | hand the journal, unrendered, to the application's store (kelixip keeps it in memory), else `:default` |
+| `c:FSL.Host.journal_output/3` | journal flush, after rendering | not implemented: a document is a file |
 
 `FSL.Host.hook/4` is how the language calls one. It tries `function_exported?/3`
 first and falls back to `Code.ensure_compiled/1`, in that order and not the
@@ -731,11 +732,16 @@ machine, which is also why no clause of the machine's own opts out of it. The
 journal records the state it joined (`joined_in`), so its first transition is
 drawn from there.
 
-**Where the document goes.** A file named by the renderer, in the working
-directory, unless the host answers `c:FSL.Host.journal_output/3`. A test tool
-writes files; a server whose operator turns a live call's journal on wants the
-diagram kept for them to read, and that store is the application's, not the
-language's.
+**Where the journal goes.** At the flush, the host is offered the journal
+itself first, `c:FSL.Host.journal_events/2`: the merged events and the metadata,
+before anything is rendered. A host that keeps it answers `{:ok, _}` and nothing
+is drawn — a server whose operator turns a live call's journal on keeps the
+journal for them, and each tool that reads it draws it its own way (a text
+ladder in a terminal, a popup in a console, PlantUML for a file). Otherwise
+the journal is rendered, and the document goes to a file named by the renderer,
+in the working directory, unless the host answers `c:FSL.Host.journal_output/3`.
+A test tool writes files. The store is the application's, not the language's;
+the drawing belongs to whoever reads.
 
 **Three lanes, and the rule is by exclusion:**
 

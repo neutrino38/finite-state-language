@@ -10,7 +10,22 @@ means for the field names: `lasterr`, `errorreason`, `currentstate` and
 struct field takes no deprecated alias — so renaming one is a **major** version
 with a migration, never a tidying.
 
-## [0.4.0] — unreleased
+## [0.4.1] — unreleased
+
+A patch that completes 0.4.0's hand-off of a finished journal: the host may now
+take the journal itself instead of a document. Optional, so a binding written
+against 0.4.0 is unchanged. Why a patch and not a minor: `mix.exs`.
+
+### Added
+
+- **`c:FSL.Host.journal_events/2`**, called first by `FSL.Journal.flush/0` with
+  the journal's events — its own and the collected ones, ordered by `:at` — and
+  the run's metadata. `{:ok, where}` or `{:error, reason}` ends the flush and
+  **nothing is rendered**: a host that keeps journals leaves the drawing to
+  whoever reads them. `:default`, or a host without the callback, goes on as in
+  0.4.0: render, `c:FSL.Host.journal_output/3`, then the file.
+
+## [0.4.0] — 2026-09-28
 
 ### Added
 

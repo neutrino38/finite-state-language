@@ -620,8 +620,9 @@ drawn as a sequence diagram. Both dialects have one — `m.trace` here,
   protocol from a name.
 - **Bounded** here by `traceSize` (default 10 000, oldest dropped); a
   browser tab lives longer than a server-side run, which Elixir's journal
-  flushes when it ends — to a file, or wherever `c:FSL.Host.journal_output/3`
-  says.
+  flushes when it ends — its events to the host (`c:FSL.Host.journal_events/2`,
+  Elixir 0.4.1), else rendered to a file or wherever
+  `c:FSL.Host.journal_output/3` says.
 
 ---
 
@@ -1069,6 +1070,7 @@ not behaviour:
 | bound | `traceSize`, default 10 000 | none: one run, flushed when it ends | a browser tab outlives a server-side run |
 | started from outside (Elixir 0.4.0) | none: the application holds `m` and calls `m.startTrace()` | `{:scenario_ctl, :journal, :on \| :off}`, handled inside the wait; `:off` flushes at once | a BEAM process is reached only by message; the operator is not the machine |
 | where the document goes (Elixir 0.4.0) | `traceToMermaid()` returns a string; the caller keeps it | `c:FSL.Host.journal_output/3`, else a file in the working directory | the TS trace is read in place, the Elixir one is rendered at flush |
+| where the journal goes (Elixir 0.4.1) | the trace is an array the caller reads | `c:FSL.Host.journal_events/2`, before any rendering; `:default` renders as above | converging: an Elixir host that keeps the events leaves the drawing to its reader, as the TS caller does |
 
 Elixir 0.4.0 adds the last two rows alone: a feature of one implementation is
 a MINOR there, and this package skips 0.4.0 rather than reuse it.

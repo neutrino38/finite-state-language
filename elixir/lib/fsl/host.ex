@@ -100,6 +100,7 @@ defmodule FSL.Host do
   | `c:diagram_renderer/0` | — | a module implementing `FSL.Diagram` |
   | `c:journal_started/1` | the context, when the journal starts, in the machine's process | `:ok` |
   | `c:journal_collect/0` | —, when the journal is flushed or cleared | the events recorded elsewhere |
+  | `c:journal_events/2` | the journal's events, merged, and the run's metadata — before any rendering | where they went, or `:default` to render |
   | `c:journal_output/3` | the rendered document, the run's metadata and the renderer | where it went, or `:default` for a file |
 
   ## A real-world example: SIP scenarios in Elixip
@@ -107,7 +108,7 @@ defmodule FSL.Host do
   [Elixip](https://framagit.org/elixip/elixip) uses FSL to run SIP scenarios —
   calls, registrations, back-to-back user agents — and is the most demanding
   embedding written so far. Its `SIP.FSL.Host` is roughly 380 lines and
-  implements fourteen of the fifteen:
+  implements fourteen of the sixteen:
 
   | Callback | What the SIP embedding does |
   |---|---|
@@ -125,7 +126,8 @@ defmodule FSL.Host do
   | `c:diagram_renderer/0` | not implemented; the default renderer is appropriate |
   | `c:journal_started/1` | watches the run's SIP dialogs, and records the request a server instance was spawned for |
   | `c:journal_collect/0` | hands over the SIP messages its transactions sent and received for this run |
-  | `c:journal_output/3` | hands the document to whatever the application configured (kelixip keeps it in memory), else a file |
+  | `c:journal_events/2` | hands the journal to whatever the application configured (kelixip keeps it in memory, unrendered), else `:default` |
+  | `c:journal_output/3` | not implemented: a document is only ever a file, as `elixipp` writes it |
 
   The measure of whether this behaviour is drawn in the right place is not
   whether SIP works — it will, since FSL grew up inside it. The measure is
@@ -444,11 +446,29 @@ defmodule FSL.Host do
   @callback journal_output(document :: String.t(), meta :: map(), renderer :: module()) ::
               {:ok, term()} | {:error, term()} | :default
 
+  @doc """
+  The finished journal itself, before any rendering. Called first by
+  `FSL.Journal.flush/0`, in the machine's process, with the journal's events —
+  its own and those `c:journal_collect/0` handed over, ordered by `:at` — and
+  the run's metadata (`FSL.Journal`'s `meta`: `:t0`, `:slot`, `:joined_in`…).
+
+  For a host that keeps journals and leaves the drawing to whoever reads them:
+  answer `{:ok, where}` once they are kept, or `{:error, reason}`, and nothing
+  is rendered. Answer `:default` to go on as without this callback: render with
+  `c:diagram_renderer/0`, then `c:journal_output/3`, then a file.
+
+  The events are plain data (maps of strings, integers, booleans and atoms), in
+  the shapes `FSL.Diagram` lists; any renderer can be run on them later.
+  """
+  @callback journal_events(events :: [map()], meta :: map()) ::
+              {:ok, term()} | {:error, term()} | :default
+
   @optional_callbacks bootstrap: 0,
                       diagram_renderer: 0,
                       journal_started: 1,
                       journal_collect: 0,
                       journal_output: 3,
+                      journal_events: 2,
                       apply_run_opts: 2,
                       build_context: 1,
                       account: 2,
