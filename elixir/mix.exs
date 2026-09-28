@@ -14,8 +14,9 @@ defmodule FSL.MixProject do
   # TypeScript implementation cannot have. A feature the contract names is taken
   # by both packages together, at the same number — 0.3.0 is one: the trace of a
   # run and its sequence diagram, spec §6.2, with the mechanisms that differ
-  # recorded in §12.4b. A feature of this implementation alone would be a MINOR
-  # here, and the sibling would skip that number rather than reuse it.
+  # recorded in §12.4b. A feature of this implementation alone is a MINOR here,
+  # and the sibling skips that number rather than reuse it — 0.4.0 is one:
+  # turning the journal on in a live run, and `c:FSL.Host.journal_output/3`.
   @version "0.4.0"
   @source_url "https://framagit.org/elixip/finite-state-language"
 

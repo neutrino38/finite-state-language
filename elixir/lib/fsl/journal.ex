@@ -35,7 +35,9 @@ defmodule FSL.Journal do
   `{:scenario_ctl, :shutdown, reason}`, and the wait resumes afterwards with the
   time it had left: the machine does not see it. `:on` opens the diagram with a
   note naming the state it was in; `:off` renders and hands the document over
-  at once, and the run goes on untraced. A run that ends with its journal on
+  at once, and the run goes on untraced: a run has one journal, so none starts
+  again — not by `:on`, not by the `debug` field, which `:off` lowers, nor by
+  `:log_sequence`. A run that ends with its journal on
   flushes it as usual. A machine outside an `on_events` sees the message at its
   next wait.
 
@@ -180,7 +182,7 @@ defmodule FSL.Journal do
   Returns `{:ok, where}` on success — the file path, or whatever the host
   answered — `:disabled` when no journal is active, or `{:error, reason}`.
   """
-  @spec flush() :: {:ok, String.t()} | :disabled | {:error, term()}
+  @spec flush() :: {:ok, term()} | :disabled | {:error, term()}
   def flush do
     case Process.get(@journal_key) do
       nil ->

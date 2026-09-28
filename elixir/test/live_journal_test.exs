@@ -61,6 +61,38 @@ defmodule FSL.LiveJournalTest do
     end
   end
 
+  # A machine whose journal a switch turned on — the binding's `debug` flag, set
+  # in its first state — and which reports that flag once it has moved on.
+  defmodule Debugged do
+    use FSL.Machine, host: FSL.LiveJournalTest.SinkHost
+
+    state initial_state do
+      Process.put(:fsl_live_probe, appdata_get(:probe))
+      fsl_ctx = Map.put(fsl_ctx, :debug, true)
+      goto(waiting)
+    end
+
+    state waiting do
+      send(appdata_get(:probe), {:waiting, self()})
+
+      on_events do
+        :go -> goto(talking, "go")
+      after
+        2_000 -> scenario_failure("timeout")
+      end
+    end
+
+    state talking do
+      send(appdata_get(:probe), {:debug, fsl_ctx.debug})
+
+      on_events do
+        :done -> scenario_success("done")
+      after
+        2_000 -> scenario_failure("timeout")
+      end
+    end
+  end
+
   defp start(module, timeout \\ 2_000) do
     test = self()
 
@@ -138,6 +170,66 @@ defmodule FSL.LiveJournalTest do
     assert_receive {:diagram, doc, _meta, _renderer}, 1_000
     assert length(String.split(doc, "journal on")) == 2
     refute_receive {:diagram, _, _, _}, 200
+  end
+
+  test ":off closes the run's one journal: a debug flag does not start another, nor does :on" do
+    pid = start(Debugged)
+    send(pid, {:scenario_ctl, :journal, :off})
+
+    assert_receive {:diagram, doc, meta, _renderer}, 1_000
+    assert meta.joined_in == :initial_state
+    assert doc =~ "journal off (waiting)"
+
+    send(pid, :go)
+    # The flag that started the journal was lowered with it.
+    assert_receive {:debug, false}, 1_000
+    send(pid, {:scenario_ctl, :journal, :on})
+    send(pid, :done)
+
+    assert_receive {:result, :ok}, 1_000
+    refute_receive {:diagram, _, _, _}, 200
+  end
+
+  test ":off closes a journal that :log_sequence turned on for the whole run" do
+    Application.put_env(:fsl, :log_sequence, true)
+    on_exit(fn -> Application.delete_env(:fsl, :log_sequence) end)
+
+    pid = start(Waiter)
+    send(pid, {:scenario_ctl, :journal, :off})
+
+    assert_receive {:diagram, doc, _meta, _renderer}, 1_000
+    assert doc =~ "initial_state -> waiting"
+
+    send(pid, :go)
+    send(pid, :done)
+    assert_receive {:result, :ok}, 1_000
+    refute_receive {:diagram, _, _, _}, 200
+  end
+
+  test "the next run in the same process has a journal of its own" do
+    Application.put_env(:fsl, :log_sequence, true)
+    on_exit(fn -> Application.delete_env(:fsl, :log_sequence) end)
+    test = self()
+
+    pid =
+      spawn(fn ->
+        for _ <- 1..2 do
+          result = FSL.Runner.run_instance(Waiter, appdata: %{probe: test, timeout: 2_000})
+          send(test, {:result, result})
+        end
+      end)
+
+    assert_receive {:waiting, ^pid}, 1_000
+    send(pid, {:scenario_ctl, :journal, :off})
+    assert_receive {:diagram, _doc, _meta, _renderer}, 1_000
+    send(pid, :done)
+    assert_receive {:result, :ok}, 1_000
+
+    assert_receive {:waiting, ^pid}, 1_000
+    send(pid, :done)
+    assert_receive {:result, :ok}, 1_000
+    assert_receive {:diagram, doc, _meta, _renderer}, 1_000
+    assert doc =~ "initial_state -> waiting"
   end
 
   test "a machine with its own :scenario_ctl clause still takes the journal message" do

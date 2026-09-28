@@ -593,7 +593,9 @@ drawn as a sequence diagram. Both dialects have one — `m.trace` here,
   mid-run — from a handler, the transition that handler returns is the
   first one recorded. A trace starts **at most once**. Elixir's
   counterpart is a `debug` field set in a state, asked again after every
-  state.
+  state, and — since Elixir 0.4.0 — `{:scenario_ctl, :journal, :on | :off}`
+  sent to a machine waiting in `on_events`; `:off` writes the journal out
+  and none starts again in that run (§12.4b).
 - **A clock on every event.** `at` is a monotonic time in milliseconds
   (`performance.now()`; microseconds in Elixir), and the trace's `t0` is
   the diagram's origin: every label is prefixed `+Nms`. Events are ordered
@@ -618,7 +620,8 @@ drawn as a sequence diagram. Both dialects have one — `m.trace` here,
   protocol from a name.
 - **Bounded** here by `traceSize` (default 10 000, oldest dropped); a
   browser tab lives longer than a server-side run, which Elixir's journal
-  flushes to a file when it ends.
+  flushes when it ends — to a file, or wherever `c:FSL.Host.journal_output/3`
+  says.
 
 ---
 
@@ -1064,6 +1067,11 @@ not behaviour:
 | renderers | Mermaid | PlantUML (default) and Mermaid | PlantUML is a server-side habit; Mermaid is the one both draw |
 | `command` events | none | a binding's verbs | TS has no verbs |
 | bound | `traceSize`, default 10 000 | none: one run, flushed when it ends | a browser tab outlives a server-side run |
+| started from outside (Elixir 0.4.0) | none: the application holds `m` and calls `m.startTrace()` | `{:scenario_ctl, :journal, :on \| :off}`, handled inside the wait; `:off` flushes at once | a BEAM process is reached only by message; the operator is not the machine |
+| where the document goes (Elixir 0.4.0) | `traceToMermaid()` returns a string; the caller keeps it | `c:FSL.Host.journal_output/3`, else a file in the working directory | the TS trace is read in place, the Elixir one is rendered at flush |
+
+Elixir 0.4.0 adds the last two rows alone: a feature of one implementation is
+a MINOR there, and this package skips 0.4.0 rather than reuse it.
 
 ### 12.5 Checked and found to agree
 

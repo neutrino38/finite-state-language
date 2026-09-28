@@ -21,6 +21,9 @@ with a migration, never a tidying.
   time it had left; the machine does not see the message, the monitor reports
   nothing, and a clause of the machine's own matching `:scenario_ctl` does not
   suppress it. The diagram opens with a note naming the state it joined.
+  A run has one journal: after `:off`, none starts again in that run — not by
+  `:on`, not by `:log_sequence`, not by the context's `debug` field, which
+  `:off` sets to `false` when the context has one.
 - **`c:FSL.Host.journal_output/3`**, where a finished diagram goes: the host
   receives the document, the run's metadata and the renderer, and answers
   `{:ok, where}`, `{:error, reason}`, or `:default` for the file in the working

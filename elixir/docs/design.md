@@ -249,6 +249,7 @@ between them is not cosmetic**:
 |---|---|---|
 | `{:scenario_ctl, :shutdown, _}` → `:__shutdown__` | FSL's: the FSM control protocol | an explicit `:scenario_ctl` clause, and nothing else |
 | `{:sbb_deadline, ref}` | FSL's: a block's completion bound (§6) | nothing — only present in a block |
+| `{:scenario_ctl, :journal, :on \| :off}` → re-enter the wait | FSL's: the journal, turned on or written out live (§7.2) | nothing — the machine never sees it |
 | whatever `c:FSL.Host.injected_clauses/1` returns | the binding's failure domains | `c:FSL.Host.clause_covers?/2`, generously |
 
 A controller asking a machine to stop is a **protocol**, so only an explicit
@@ -503,7 +504,8 @@ Three families, all plain `send/2` into the FSM's mailbox and matched in
 |---|---|---|
 | `{:parent_msg, payload}` | parent → child | application message downwards. The sender was always the parent, so the name is dropped from the tuple and put in the tag |
 | `{:child_msg, name, payload}` | child → parent | application message upwards, tagged with the name the parent assigned at spawn (`as:`), so the parent matches a stable literal in every state |
-| `{:scenario_ctl, :shutdown, reason}` | controller → FSM | cooperative stop. The 3-tuple envelope leaves room for future verbs without changing shape |
+| `{:scenario_ctl, :shutdown, reason}` | controller → FSM | cooperative stop. The 3-tuple envelope leaves room for other verbs without changing shape |
+| `{:scenario_ctl, :journal, :on \| :off}` | operator → FSM | start the journal, or write it out now (§7.2). Handled by the language inside the wait, never delivered to the machine |
 | `{:child_exit, name, outcome, reason}` | child → parent | how the child ended |
 | `{:DOWN, ref, :process, pid, reason}` | OTP → parent | safety net when the child died without reporting |
 
@@ -684,7 +686,11 @@ binding's own app when it named one with `config :fsl, :log_sequence_app,
 :my_app` — a binding usually keeps all of its configuration in one namespace and
 should not have to split one flag out of it. A context field `debug` turns it on
 for one machine; the runner asks after every state, so the flag works when set
-mid-run, and the journal starts at most once.
+mid-run. A machine waiting in `on_events` can also be told from outside, with
+`{:scenario_ctl, :journal, :on | :off}` (below). **A run has one journal**:
+asking for one while it runs does nothing, and once `:off` has written it out
+none starts again — not by `:on`, not by a switch still set. `:off` lowers the
+context's `debug` field with it, when the context has one.
 
 **A clock on every event.** Each event carries `:at` (monotonic microseconds)
 and the metadata `:t0`; the renderers prefix every label with `+Nms`. The clock

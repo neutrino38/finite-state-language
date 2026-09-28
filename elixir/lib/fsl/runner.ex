@@ -31,6 +31,10 @@ defmodule FSL.Runner do
   """
   require Logger
 
+  # Set once an operator wrote the journal out (`:off`): a run has one journal,
+  # so none starts again until the run ends.
+  @journal_closed_key :fsl_journal_closed
+
   @doc """
   Run one instance of `module`, optionally bootstrapping its host first.
 
@@ -63,6 +67,9 @@ defmodule FSL.Runner do
     end
 
     if slot_id = Keyword.get(opts, :slot_id), do: Process.put(:scenario_slot_id, slot_id)
+
+    # A process may run one instance after another: each run gets its journal.
+    Process.delete(@journal_closed_key)
 
     # The scenario a service building block reports under: a block's states show
     # on this row, qualified, never under the block's own name (§4 of the design).
@@ -302,11 +309,12 @@ defmodule FSL.Runner do
   end
 
   # Start the journal once, whoever asked: the switches above, or an operator
-  # through `journal_control/2`. `slot` is what the embedding knows this run by
+  # through `journal_control/2` — and never again once an operator has written it
+  # out, so a run has one journal. `slot` is what the embedding knows this run by
   # (the `:slot_id` it passed to `run_instance/2`), so a binding that keeps
   # finished diagrams can file them under it.
   defp start_journal(module, ctx, joined_in) do
-    if not FSL.Journal.enabled?() do
+    if not FSL.Journal.enabled?() and not Process.get(@journal_closed_key, false) do
       FSL.Journal.start(%{
         scenario: scenario_label(module),
         pid: inspect(self()),
@@ -317,9 +325,10 @@ defmodule FSL.Runner do
 
       # What the binding records outside this process starts here (c:FSL.Host.journal_started/1).
       FSL.Host.call(module, :journal_started, [ctx], :ok)
+      :started
+    else
+      :ok
     end
-
-    :ok
   end
 
   @doc false
@@ -334,8 +343,7 @@ defmodule FSL.Runner do
         :ok
 
       module ->
-        if not FSL.Journal.enabled?() do
-          start_journal(module, ctx, ctx.currentstate)
+        if start_journal(module, ctx, ctx.currentstate) == :started do
           # The diagram opens in the middle of a state: say which, and why.
           FSL.Journal.record_command(:control, "journal on (#{ctx.currentstate})")
         end
@@ -348,9 +356,13 @@ defmodule FSL.Runner do
     if FSL.Journal.enabled?() do
       FSL.Journal.record_command(:control, "journal off (#{ctx.currentstate})")
       flush_journal()
+      Process.put(@journal_closed_key, true)
+      # The flag that may have started it is lowered too: the run goes on
+      # untraced, and a binding reading `debug` for anything else sees it off.
+      if Map.has_key?(ctx, :debug), do: Map.put(ctx, :debug, false), else: ctx
+    else
+      ctx
     end
-
-    ctx
   end
 
   defp flush_journal do
