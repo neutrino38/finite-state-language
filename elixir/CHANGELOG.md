@@ -10,7 +10,12 @@ means for the field names: `lasterr`, `errorreason`, `currentstate` and
 struct field takes no deprecated alias — so renaming one is a **major** version
 with a migration, never a tidying.
 
-## [0.3.0] — unreleased
+## [0.3.0] — 2026-09-28
+
+Released together with `finite-state-language` 0.3.0 on npm, which gains the
+same trace and the same Mermaid sequence diagram; the two are reconciled in
+[`spec/fsl-js-ts.md`](https://framagit.org/elixip/finite-state-language/-/blob/main/spec/fsl-js-ts.md)
+§6.2 and §12.4b, mechanism by mechanism.
 
 ### Added
 

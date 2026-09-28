@@ -7,9 +7,9 @@ defmodule FSL.Diagram.Mermaid do
   module for what is drawn and why — in the dialect that needs no toolchain:
   GitHub, GitLab and most Markdown viewers render a ` ```mermaid ` block
   in place, so a diagram pasted into an issue is a diagram, not an attachment
-  somebody has to run a jar over. It is also what the TypeScript sibling ships
-  (`Machine.toMermaid()`), so the two dialects converge on one output format
-  that a reader can compare side by side.
+  somebody has to run a jar over. It is also what the TypeScript sibling ships —
+  `traceToMermaid()` draws the same sequence diagram from a run of a machine in
+  the browser — so the two ends of one call can be compared side by side.
 
   ```elixir
   defmodule MyApp.FSLHost do

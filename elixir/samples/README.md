@@ -9,7 +9,7 @@ mix run samples/fishing.exs
 
 | Sample | What it is | What it shows |
 |---|---|---|
-| [`fishing.exs`](fishing.exs) | a fishing trip, played out in ~2 seconds | the deadline that does not restart, `stay`, `goto back`, a sub-FSM, a host, the Mermaid diagram |
+| [`fishing.exs`](fishing.exs) | a fishing trip, played out in ~3 seconds | the deadline that does not restart, `stay`, `goto back`, a sub-FSM, a host, the Mermaid diagram |
 
 ---
 
@@ -46,25 +46,29 @@ GitHub comment:
 sequenceDiagram
     participant local as Bob the angler
     participant peer as the lake
-    Note over local: initial_state
-    Note over local: initial_state -> casting
-    Note over local: casting -> waiting
-    peer->>local: a duck
-    Note over local: waiting -> waiting
-    peer->>local: a bite
-    Note over local: waiting -> striking
-    Note over local: striking -> casting
-    Note over local: casting -> waiting
-    peer->>local: a snag
-    Note over local: waiting -> untangling
-    Note over local: untangling -> waiting
-    peer->>local: a duck
-    Note over local: waiting -> waiting
-    peer->>local: a bite
-    Note over local: waiting -> striking
-    Note over local: striking -> packing_up
-    Note over local: succeeded: 2 fish
+    Note over local: +0ms initial_state
+    Note over local: +0ms initial_state -> casting
+    Note over local: +0ms casting -> waiting
+    peer->>local: +599ms a duck
+    Note over local: +599ms waiting -> waiting
+    peer->>local: +999ms a bite
+    Note over local: +999ms waiting -> striking
+    Note over local: +1250ms striking -> casting
+    Note over local: +1250ms casting -> waiting
+    peer->>local: +1900ms a snag
+    Note over local: +1900ms waiting -> untangling
+    Note over local: +1900ms untangling -> waiting
+    peer->>local: +2401ms a duck
+    Note over local: +2401ms waiting -> waiting
+    peer->>local: +3102ms a bite
+    Note over local: +3102ms waiting -> striking
+    Note over local: +3354ms striking -> packing_up
+    Note over local: +3354ms succeeded: 2 fish
 ```
+
+Every label carries the time since the journal started. Read the gap between
+`+999ms a bite` and `+1250ms striking -> casting`: that is Bob's 250 ms of
+reaction time, drawn.
 
 ### Why a fishing trip
 
@@ -117,7 +121,7 @@ language depends on knowing a protocol, and exactly where the knowing lives.
 
 ### Two things the file is careful about, and says so
 
-**The host is declared before the machine that names it.** Three of the twelve
+**The host is declared before the machine that names it.** Three of the fourteen
 callbacks are asked *while the machine compiles* — which type a clause's event
 carries, which clauses to inject into every wait, whether the machine already
 handles them. A host defined further down the file does not exist yet when those

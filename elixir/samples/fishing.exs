@@ -63,14 +63,14 @@ end
 # ── The host: eight lines, and the only thing an embedding must write ───────
 #
 # Declared BEFORE the machine that names it, and that is not tidiness: three of
-# the twelve callbacks are asked *while the machine compiles* — which event type
+# the fourteen callbacks are asked *while the machine compiles* — which event type
 # a clause carries, which clauses to inject into every wait, whether the machine
 # already handles them. A host defined further down the file does not exist yet
 # when those questions are asked, and the machine silently gets the defaults.
 #
 # Everything the language refuses to decide for itself is a callback here, and a
 # host inherits the default for every one it leaves out. A SIP binding answers
-# all twelve; a fishing trip answers two.
+# thirteen; a fishing trip answers two.
 #
 # The second one is the interesting one. FSL classifies its own vocabulary — a
 # message from a child, a control message — and asks the embedding about

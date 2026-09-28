@@ -11,7 +11,7 @@ defmodule FSL.Host do
 
   ## Embedding FSL in an application
 
-  Twelve callbacks, all optional. Implement the ones the application needs; FSL
+  Fourteen callbacks, all optional. Implement the ones the application needs; FSL
   falls back to `FSL.Host.Default` for the rest. A useful host can therefore be
   short:
 
@@ -38,7 +38,7 @@ defmodule FSL.Host do
       end
 
   That pair is complete and runnable; `samples/fishing.exs` runs it. The host
-  answers two questions and inherits ten.
+  answers two questions and inherits twelve.
 
   The name is recorded on the machine's module and read back through the
   generated `__fsl_host__/0`. No application environment and no global
