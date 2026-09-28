@@ -167,8 +167,10 @@ defmodule FSL.Diagram.PlantUML do
   # ── Body ──────────────────────────────────────────────────────────────────
 
   defp body(events, rctx) do
+    # A journal started mid-run knows the state it joined the run in, so its
+    # first transition is drawn from there rather than as an initial state.
     {lines, _current_state} =
-      Enum.reduce(events, {[], nil}, fn event, {acc, current} ->
+      Enum.reduce(events, {[], Map.get(rctx.meta, :joined_in)}, fn event, {acc, current} ->
         {rendered, next} = render_event(event, current, rctx)
         {acc ++ rendered, next}
       end)

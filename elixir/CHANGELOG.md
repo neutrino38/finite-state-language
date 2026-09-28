@@ -10,6 +10,33 @@ means for the field names: `lasterr`, `errorreason`, `currentstate` and
 struct field takes no deprecated alias — so renaming one is a **major** version
 with a migration, never a tidying.
 
+## [0.4.0] — unreleased
+
+### Added
+
+- **Turning the journal on in a live run.** Every `on_events` carries a clause
+  for `{:scenario_ctl, :journal, :on | :off}`, next to the one for the
+  cooperative shutdown: `:on` starts the journal of a machine that is waiting,
+  `:off` renders it and hands it over at once. The wait then resumes with the
+  time it had left; the machine does not see the message, the monitor reports
+  nothing, and a clause of the machine's own matching `:scenario_ctl` does not
+  suppress it. The diagram opens with a note naming the state it joined.
+- **`c:FSL.Host.journal_output/3`**, where a finished diagram goes: the host
+  receives the document, the run's metadata and the renderer, and answers
+  `{:ok, where}`, `{:error, reason}`, or `:default` for the file in the working
+  directory that is still written when a host does not implement it.
+- **`:slot` and `:joined_in` in the journal's metadata**: the `:slot_id` the run
+  was started with, and the state the run was in when the journal started after
+  its beginning.
+
+### Changed
+
+- A journal started after the beginning of a run — by a `debug` flag set in a
+  state, or live — draws its first transition from the state it joined
+  (`second -> third`), where 0.3.0 drew it as an initial state (`third`).
+- `FSL.Journal.flush/0` returns `{:ok, where}`: the path of the file, or what
+  `c:FSL.Host.journal_output/3` answered.
+
 ## [0.3.0] — 2026-09-28
 
 Released together with `finite-state-language` 0.3.0 on npm, which gains the

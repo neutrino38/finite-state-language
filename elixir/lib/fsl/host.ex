@@ -100,13 +100,14 @@ defmodule FSL.Host do
   | `c:diagram_renderer/0` | — | a module implementing `FSL.Diagram` |
   | `c:journal_started/1` | the context, when the journal starts, in the machine's process | `:ok` |
   | `c:journal_collect/0` | —, when the journal is flushed or cleared | the events recorded elsewhere |
+  | `c:journal_output/3` | the rendered document, the run's metadata and the renderer | where it went, or `:default` for a file |
 
   ## A real-world example: SIP scenarios in Elixip
 
   [Elixip](https://framagit.org/elixip/elixip) uses FSL to run SIP scenarios —
   calls, registrations, back-to-back user agents — and is the most demanding
   embedding written so far. Its `SIP.FSL.Host` is roughly 380 lines and
-  implements thirteen of the fourteen:
+  implements fourteen of the fifteen:
 
   | Callback | What the SIP embedding does |
   |---|---|
@@ -124,6 +125,7 @@ defmodule FSL.Host do
   | `c:diagram_renderer/0` | not implemented; the default renderer is appropriate |
   | `c:journal_started/1` | watches the run's SIP dialogs, and records the request a server instance was spawned for |
   | `c:journal_collect/0` | hands over the SIP messages its transactions sent and received for this run |
+  | `c:journal_output/3` | hands the document to whatever the application configured (kelixip keeps it in memory), else a file |
 
   The measure of whether this behaviour is drawn in the right place is not
   whether SIP works — it will, since FSL grew up inside it. The measure is
@@ -428,10 +430,25 @@ defmodule FSL.Host do
   """
   @callback journal_collect() :: [map()]
 
+  @doc """
+  Where a finished diagram goes. Called in the machine's process by
+  `FSL.Journal.flush/0` — at the end of a run, or when an operator turned the
+  journal off — with the rendered document, the run's metadata (`FSL.Journal`'s
+  `meta`, `:slot` included) and the renderer that produced it.
+
+  Answer `{:ok, where}` once the document is kept (`where` is logged),
+  `{:error, reason}` when it could not be, or `:default` to let the journal
+  write it to `renderer.filename(meta)` in the working directory, which is also
+  what happens when a host does not implement this.
+  """
+  @callback journal_output(document :: String.t(), meta :: map(), renderer :: module()) ::
+              {:ok, term()} | {:error, term()} | :default
+
   @optional_callbacks bootstrap: 0,
                       diagram_renderer: 0,
                       journal_started: 1,
                       journal_collect: 0,
+                      journal_output: 3,
                       apply_run_opts: 2,
                       build_context: 1,
                       account: 2,

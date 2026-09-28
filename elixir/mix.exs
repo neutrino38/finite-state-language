@@ -16,7 +16,7 @@ defmodule FSL.MixProject do
   # run and its sequence diagram, spec §6.2, with the mechanisms that differ
   # recorded in §12.4b. A feature of this implementation alone would be a MINOR
   # here, and the sibling would skip that number rather than reuse it.
-  @version "0.3.0"
+  @version "0.4.0"
   @source_url "https://framagit.org/elixip/finite-state-language"
 
   def project do

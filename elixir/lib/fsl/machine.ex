@@ -507,11 +507,16 @@ defmodule FSL.Machine do
     # The injected clauses leave the state by construction, so they get no
     # stay-dispatch wrapper — one whose `{:stay, …}` branch the compiler would
     # rightly report as unreachable, once per scenario state.
+    #
+    # The journal clause is the exception: it never leaves the state, it re-enters
+    # the wait, and it is not an event of the machine — so it is neither
+    # instrumented nor reported, and no clause of the scenario opts out of it.
     instrumented =
-      Enum.map(
-        sbb_clauses ++ host_clauses ++ ctl_clauses,
-        &instrument_receive_clause(&1, ctx, host, nil, nil, namespaces)
-      ) ++
+      [journal_clause(ctx, wait, deadline)] ++
+        Enum.map(
+          sbb_clauses ++ host_clauses ++ ctl_clauses,
+          &instrument_receive_clause(&1, ctx, host, nil, nil, namespaces)
+        ) ++
         Enum.map(
           do_clauses,
           &instrument_receive_clause(&1, ctx, host, wait, deadline, namespaces)
@@ -627,6 +632,23 @@ defmodule FSL.Machine do
       quote do
         {:scenario_ctl, :shutdown, _reason} ->
           {:goto, :__shutdown__, "shutdown", :control, unquote(ctx)}
+      end
+
+    clause
+  end
+
+  # The auto-injected journal clause: an operator turns the journal of a live run
+  # on, or writes it out now (FSL.Runner.journal_control/2), and the wait resumes
+  # with the time it had left — the machine never sees the message.
+  defp journal_clause(ctx, wait, deadline) do
+    [clause] =
+      quote do
+        {:scenario_ctl, :journal, fsl_journal_op} when fsl_journal_op in [:on, :off] ->
+          unquote(wait).(
+            unquote(wait),
+            FSL.Runner.journal_control(fsl_journal_op, unquote(ctx)),
+            unquote(deadline)
+          )
       end
 
     clause

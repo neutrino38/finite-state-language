@@ -79,7 +79,7 @@ defmodule FSL.Runner do
       |> apply_run_opts(module, opts)
       |> FSL.Context.put(:currentstate, :initial_state)
 
-    maybe_start_sequence_journal(module, ctx)
+    maybe_start_sequence_journal(module, ctx, nil)
 
     report(module, account(module, ctx, :initial), :initial_state, "start", nil)
     loop(module, :initial_state, ctx, states)
@@ -281,7 +281,11 @@ defmodule FSL.Runner do
   # `config` block, or in a state, which is why the loop asks again after every
   # state. No-op otherwise, and once started: the journal recording helpers are
   # then free.
-  defp maybe_start_sequence_journal(module, ctx) do
+  #
+  # `joined_in` is the state the run is in when the journal starts after its
+  # beginning, so the first transition it records is drawn from there; nil at the
+  # start of the run.
+  defp maybe_start_sequence_journal(module, ctx, joined_in) do
     # Two switches:
     #
     #   * `:log_sequence` — what a CLI sets for a whole run. Read under `:fsl`,
@@ -291,10 +295,23 @@ defmodule FSL.Runner do
     #   * `debug`, a field a binding's context may define (SIP's does) and FSL's
     #     does not. Read tolerantly: a machine whose binding has no such field
     #     simply never turns the journal on that way.
-    if not FSL.Journal.enabled?() and (journal_enabled?() or Map.get(ctx, :debug, false)) do
+    if journal_enabled?() or Map.get(ctx, :debug, false),
+      do: start_journal(module, ctx, joined_in)
+
+    :ok
+  end
+
+  # Start the journal once, whoever asked: the switches above, or an operator
+  # through `journal_control/2`. `slot` is what the embedding knows this run by
+  # (the `:slot_id` it passed to `run_instance/2`), so a binding that keeps
+  # finished diagrams can file them under it.
+  defp start_journal(module, ctx, joined_in) do
+    if not FSL.Journal.enabled?() do
       FSL.Journal.start(%{
         scenario: scenario_label(module),
         pid: inspect(self()),
+        slot: Process.get(:scenario_slot_id),
+        joined_in: joined_in,
         config: module.__scenario_config__()
       })
 
@@ -304,6 +321,48 @@ defmodule FSL.Runner do
 
     :ok
   end
+
+  @doc false
+  # Back the `{:scenario_ctl, :journal, :on | :off}` clause every `on_events`
+  # carries: turn the journal of this live run on, or write it out now. Runs in
+  # the machine's process, inside the wait, and hands the context back so the
+  # wait resumes where it was.
+  @spec journal_control(:on | :off, FSL.Context.t()) :: FSL.Context.t()
+  def journal_control(:on, ctx) do
+    case Process.get(:scenario_module) do
+      nil ->
+        :ok
+
+      module ->
+        if not FSL.Journal.enabled?() do
+          start_journal(module, ctx, ctx.currentstate)
+          # The diagram opens in the middle of a state: say which, and why.
+          FSL.Journal.record_command(:control, "journal on (#{ctx.currentstate})")
+        end
+    end
+
+    ctx
+  end
+
+  def journal_control(:off, ctx) do
+    if FSL.Journal.enabled?() do
+      FSL.Journal.record_command(:control, "journal off (#{ctx.currentstate})")
+      flush_journal()
+    end
+
+    ctx
+  end
+
+  defp flush_journal do
+    case FSL.Journal.flush() do
+      {:ok, where} -> Logger.info("Sequence diagram written to #{describe_output(where)}")
+      {:error, reason} -> Logger.warning("Could not write sequence diagram: #{inspect(reason)}")
+      :disabled -> :ok
+    end
+  end
+
+  defp describe_output(where) when is_binary(where), do: where
+  defp describe_output(where), do: inspect(where)
 
   # The context a state handed back, whatever descriptor it came in: every shape
   # loop/4 matches carries it last. nil for a malformed one.
@@ -343,7 +402,7 @@ defmodule FSL.Runner do
     # exceptions, never :throw). Caught here, at the root, it is re-applied as if
     # this state had written it: same report, same finalize, same verdict.
     result = run_state(module, fun, ctx)
-    maybe_start_sequence_journal(module, descriptor_ctx(result) || ctx)
+    maybe_start_sequence_journal(module, descriptor_ctx(result) || ctx, state_name)
 
     case result do
       {:goto, :next, desc, type, ctx2} ->
@@ -906,11 +965,7 @@ defmodule FSL.Runner do
     # from a `rescue` clause before writing one of its own.
     FSL.Context.forget()
 
-    case FSL.Journal.flush() do
-      {:ok, path} -> Logger.info("Sequence diagram written to #{path}")
-      {:error, reason} -> Logger.warning("Could not write sequence diagram: #{inspect(reason)}")
-      :disabled -> :ok
-    end
+    flush_journal()
 
     case outcome do
       :success ->

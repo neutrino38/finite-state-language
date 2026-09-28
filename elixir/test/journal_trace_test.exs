@@ -128,10 +128,9 @@ defmodule FSL.JournalTraceTest do
       # Nothing from before the flag…
       refute content =~ "initial_state -> second"
       refute content =~ "send_before"
-      # …everything from the transition that follows the state that set it. The
-      # first transition journalled is drawn as the state entered: the event
-      # names where the machine went, not where it came from.
-      assert content =~ ~r/note over local : \+\d+ms third\n/
+      # …everything from the transition that follows the state that set it,
+      # drawn from the state the journal joined the run in.
+      assert content =~ ~r/note over local : \+\d+ms second -> third\n/
       assert content =~ "third -> fourth"
       assert content =~ "succeeded: done"
       # What journal_started/1 recorded, on a lane of its own.

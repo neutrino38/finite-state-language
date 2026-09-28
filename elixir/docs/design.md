@@ -307,6 +307,7 @@ machine needs, so a machine with no protocol runs with no host written.
 | `c:FSL.Host.diagram_renderer/0` | journal flush | not implemented: the shipped renderer is the right one |
 | `c:FSL.Host.journal_started/1` | journal start, in the machine's process | watch the run's dialogs; record the request a server instance was spawned for |
 | `c:FSL.Host.journal_collect/0` | journal flush and clear | hand over the SIP messages its transactions recorded for the run (§7.2) |
+| `c:FSL.Host.journal_output/3` | journal flush | hand the diagram to the application's store (kelixip keeps it in memory), else a file |
 
 `FSL.Host.hook/4` is how the language calls one. It tries `function_exported?/3`
 first and falls back to `Code.ensure_compiled/1`, in that order and not the
@@ -713,6 +714,22 @@ here and a binding does not ship a renderer of its own to get it.
 
 A renderer skips an event of a kind it does not know, so a journal richer than
 its renderer degrades to a diagram with less in it, never to a crash.
+
+**Turning it on in a live run.** A machine blocked in `on_events` never gets to
+the end of its state, so a flag it reads there cannot reach it. It is told
+instead, the way it is told to shut down: every `on_events` carries a clause for
+`{:scenario_ctl, :journal, :on | :off}`. `:on` starts the journal and `:off`
+flushes it at once; either way the clause re-enters the wait with the time it
+had left, unreported — the message is addressed to the language, not to the
+machine, which is also why no clause of the machine's own opts out of it. The
+journal records the state it joined (`joined_in`), so its first transition is
+drawn from there.
+
+**Where the document goes.** A file named by the renderer, in the working
+directory, unless the host answers `c:FSL.Host.journal_output/3`. A test tool
+writes files; a server whose operator turns a live call's journal on wants the
+diagram kept for them to read, and that store is the application's, not the
+language's.
 
 **Three lanes, and the rule is by exclusion:**
 

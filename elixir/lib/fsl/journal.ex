@@ -24,6 +24,27 @@ defmodule FSL.Journal do
   a `debug` field. `FSL.Runner` asks again after every state, so a flag set in
   the middle of a run starts the journal at the transition that follows.
 
+  ## Turning it on in a live run
+
+  A machine waiting in `on_events` is told from outside:
+
+      send(pid, {:scenario_ctl, :journal, :on})   # journal from now on
+      send(pid, {:scenario_ctl, :journal, :off})  # write it out now
+
+  Every `on_events` carries a clause for this message, like the one for
+  `{:scenario_ctl, :shutdown, reason}`, and the wait resumes afterwards with the
+  time it had left: the machine does not see it. `:on` opens the diagram with a
+  note naming the state it was in; `:off` renders and hands the document over
+  at once, and the run goes on untraced. A run that ends with its journal on
+  flushes it as usual. A machine outside an `on_events` sees the message at its
+  next wait.
+
+  ## Where the document goes
+
+  To a file named by the renderer, in the working directory — unless the host
+  answers `c:FSL.Host.journal_output/3`, which receives the document and decides.
+  A server that keeps diagrams in memory for an operator does it there.
+
   ## Time
 
   Every event carries `:at`, the monotonic time it was recorded in
@@ -77,8 +98,20 @@ defmodule FSL.Journal do
             }
           | %{:kind => :message, :at => integer(), optional(atom()) => term()}
 
-  @typedoc "`:t0` is the monotonic time the journal started, the diagram's origin."
-  @type meta :: %{scenario: String.t(), pid: String.t(), config: keyword(), t0: integer()}
+  @typedoc """
+  `:t0` is the monotonic time the journal started, the diagram's origin. `:slot`
+  is the `:slot_id` the run was started with, `nil` when none. `:joined_in` is
+  the state the run was in when the journal started after its beginning, `nil`
+  when it started with the run.
+  """
+  @type meta :: %{
+          scenario: String.t(),
+          pid: String.t(),
+          slot: term(),
+          joined_in: atom() | nil,
+          config: keyword(),
+          t0: integer()
+        }
 
   @doc """
   Start a journal in the current process with the given metadata. `:t0` is
@@ -136,13 +169,16 @@ defmodule FSL.Journal do
   def meta, do: Process.get(@meta_key)
 
   @doc """
-  Render the diagram file and clear the journal from the process dictionary.
+  Render the diagram and clear the journal from the process dictionary.
+
+  The document goes where `c:FSL.Host.journal_output/3` says, or to a file named
+  by the renderer in the working directory when the host has no opinion.
 
   The events the host recorded outside this process (`c:FSL.Host.journal_collect/0`)
   are merged in first, ordered by `:at`.
 
-  Returns `{:ok, path}` on success, `:disabled` when no journal is active, or
-  `{:error, reason}` if the file could not be written.
+  Returns `{:ok, where}` on success — the file path, or whatever the host
+  answered — `:disabled` when no journal is active, or `{:error, reason}`.
   """
   @spec flush() :: {:ok, String.t()} | :disabled | {:error, term()}
   def flush do
@@ -161,11 +197,13 @@ defmodule FSL.Journal do
           FSL.Host.call(module, :diagram_renderer, [], FSL.Diagram.PlantUML)
 
         content = renderer.render(events, meta)
-        path = renderer.filename(meta)
         clear()
 
-        case File.write(path, content) do
-          :ok -> {:ok, path}
+        # Where the document goes is the host's to say (c:FSL.Host.journal_output/3);
+        # a file named by the renderer, in the working directory, by default.
+        case FSL.Host.call(module, :journal_output, [content, meta, renderer], :default) do
+          :default -> write_file(renderer.filename(meta), content)
+          {:ok, where} -> {:ok, where}
           {:error, reason} -> {:error, reason}
         end
     end
@@ -187,6 +225,13 @@ defmodule FSL.Journal do
   # ── internals ──────────────────────────────────────────────────────────────
 
   defp now, do: System.monotonic_time(:microsecond)
+
+  defp write_file(path, content) do
+    case File.write(path, content) do
+      :ok -> {:ok, path}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   # No scenario module in the process (a journal started by hand, in a test):
   # no host to ask.
