@@ -11,7 +11,7 @@ defmodule FSL.Host do
 
   ## Embedding FSL in an application
 
-  Twelve callbacks, all optional. Implement the ones the application needs; FSL
+  Fourteen callbacks, all optional. Implement the ones the application needs; FSL
   falls back to `FSL.Host.Default` for the rest. A useful host can therefore be
   short:
 
@@ -38,7 +38,7 @@ defmodule FSL.Host do
       end
 
   That pair is complete and runnable; `samples/fishing.exs` runs it. The host
-  answers two questions and inherits ten.
+  answers two questions and inherits twelve.
 
   The name is recorded on the machine's module and read back through the
   generated `__fsl_host__/0`. No application environment and no global
@@ -98,13 +98,15 @@ defmodule FSL.Host do
   | Callback | Receives | Returns |
   |---|---|---|
   | `c:diagram_renderer/0` | — | a module implementing `FSL.Diagram` |
+  | `c:journal_started/1` | the context, when the journal starts, in the machine's process | `:ok` |
+  | `c:journal_collect/0` | —, when the journal is flushed or cleared | the events recorded elsewhere |
 
   ## A real-world example: SIP scenarios in Elixip
 
   [Elixip](https://framagit.org/elixip/elixip) uses FSL to run SIP scenarios —
   calls, registrations, back-to-back user agents — and is the most demanding
   embedding written so far. Its `SIP.FSL.Host` is roughly 380 lines and
-  implements eleven of the twelve:
+  implements thirteen of the fourteen:
 
   | Callback | What the SIP embedding does |
   |---|---|
@@ -120,6 +122,8 @@ defmodule FSL.Host do
   | `c:spawn_child/2` | registers a child that waits for a call with the call dispatcher |
   | `c:finalize/1` | winds down the call legs, then the media, after a bounded wait for the dialog to end |
   | `c:diagram_renderer/0` | not implemented; the default renderer is appropriate |
+  | `c:journal_started/1` | watches the run's SIP dialogs, and records the request a server instance was spawned for |
+  | `c:journal_collect/0` | hands over the SIP messages its transactions sent and received for this run |
 
   The measure of whether this behaviour is drawn in the right place is not
   whether SIP works — it will, since FSL grew up inside it. The measure is
@@ -401,8 +405,33 @@ defmodule FSL.Host do
   """
   @callback diagram_renderer() :: module()
 
+  @doc """
+  The journal of this run has just started, in the machine's own process — at
+  the first state, or at the transition that follows a state which turned the
+  `debug` flag on.
+
+  The place for a binding that records events outside the machine's process to
+  start doing so for this run, and to hand anything it already knows to
+  `FSL.Journal.record/1`. Any return value is ignored.
+  """
+  @callback journal_started(ctx :: FSL.Context.t()) :: :ok
+
+  @doc """
+  The events this run recorded outside the machine's process, handed over and
+  forgotten.
+
+  Called in the machine's process by `FSL.Journal.flush/0`, which merges them
+  with its own events by `:at`, and by `FSL.Journal.clear/0`, which drops them —
+  so the binding's store is drained either way. Each event is a map with a
+  `:kind` and an `:at` (`System.monotonic_time(:microsecond)`); the kinds the
+  shipped renderers draw are listed in `FSL.Diagram`, and they skip any other.
+  """
+  @callback journal_collect() :: [map()]
+
   @optional_callbacks bootstrap: 0,
                       diagram_renderer: 0,
+                      journal_started: 1,
+                      journal_collect: 0,
                       apply_run_opts: 2,
                       build_context: 1,
                       account: 2,

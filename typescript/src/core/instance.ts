@@ -30,6 +30,12 @@ import type {
 import { TERMINAL_STATES } from "./types.js";
 import { PendingQueue } from "./pending.js";
 import { TransitionLog, type LogEntry } from "./log.js";
+import {
+  TraceRecorder,
+  now,
+  type Trace,
+  type TraceMessageInput,
+} from "./trace.js";
 import { TimerBag } from "./timers.js";
 import { TaskManager, type TaskOpts } from "./tasks.js";
 
@@ -43,6 +49,25 @@ const MAX_CHAIN = 1000;
 const MAX_SBB_DEPTH = 16;
 const DEFAULT_PENDING_MAX = 32;
 const DEFAULT_LOG_SIZE = 50;
+/**
+ * Bound on a trace (design §9.3). A web phone left open runs for hours,
+ * and a trace nobody reads must not grow without end in a browser tab.
+ */
+const DEFAULT_TRACE_SIZE = 10_000;
+
+/** Types the machine sends itself or its relatives: never from the peer. */
+const INTERNAL_TYPES = new Set(["parent:msg", "child:msg", "child:exit"]);
+/**
+ * The result of work the machine started itself — `fx.task` and the
+ * `http` subpath. FSL Elixir draws `:timer`, `:http` and `:db` the same
+ * way: a note, because nothing came from the peer.
+ */
+const INTERNAL_PREFIXES = ["task:", "http:"];
+
+/** Outcome of a terminal state name, for the trace. */
+const OUTCOME_OF: Readonly<Record<string, Outcome>> = Object.fromEntries(
+  Object.entries(TERMINAL_STATES).map(([outcome, name]) => [name, outcome]),
+) as Record<string, Outcome>;
 
 /** Sentinel returned by guard() when the user callback threw. */
 const FAILED = Symbol("fsl-guard-failed");
@@ -179,8 +204,16 @@ export class MachineInstance<
   private readonly graceMs: number;
   private readonly inheritedOpts: Pick<
     StartOpts<Ctx>,
-    "debug" | "logger" | "logSize" | "graceMs"
+    "debug" | "logger" | "logSize" | "graceMs" | "trace" | "traceSize"
   >;
+  /** Set once the trace has started (spec §6.2); never unset. */
+  private tracer: TraceRecorder | undefined;
+  private readonly traceSize: number;
+  /**
+   * Events the machine built for itself — a block's return — so the
+   * trace can tell them from what arrived from outside.
+   */
+  private readonly ownEvents = new WeakSet<object>();
   private readonly subscribers = new Set<Listener<Ctx, Ev, SN>>();
   private snapshot!: Snapshot<Ctx, Ev, SN>;
   private readonly translog: TransitionLog;
@@ -214,7 +247,11 @@ export class MachineInstance<
       logger: opts.logger,
       logSize: opts.logSize,
       graceMs: opts.graceMs,
+      trace: opts.trace,
+      traceSize: opts.traceSize,
     };
+    this.traceSize = opts.traceSize ?? DEFAULT_TRACE_SIZE;
+    if (opts.trace === true) this.startTrace();
     this.debug = opts.debug ?? false;
     this.debugLogger = opts.logger ?? ((line) => console.debug(line));
     this.warnLogger = opts.logger ?? ((line) => console.warn(line));
@@ -260,6 +297,7 @@ export class MachineInstance<
         this.pendingQ.drop(sel as string | ((ev: AnyEvent) => boolean)),
       spawn: (machine, opts) => this.spawnChild(machine, opts),
       notify: (child, payload) => this.notifyChild(child, payload),
+      startTrace: () => this.startTrace(),
       notifyParent: (payload) => {
         // No-op without a parent: the same machine runs standalone.
         if (this.parentLink === undefined) return;
@@ -364,6 +402,30 @@ export class MachineInstance<
 
   get pending(): readonly Ev[] {
     return this.pendingQ.list() as readonly Ev[];
+  }
+
+  get trace(): Trace | undefined {
+    return this.tracer?.view();
+  }
+
+  /**
+   * Start the trace now (spec §6.2). At most once: a second call keeps
+   * the trace already running, so a state that asks on every entry does
+   * not restart the diagram's clock. Called from a handler, the
+   * transition that handler returns is the first one recorded.
+   */
+  startTrace(): void {
+    this.tracer ??= new TraceRecorder(this.def.name, this.traceSize);
+  }
+
+  /**
+   * Record a message the binding saw go over the wire (spec §6.2). `at`
+   * is stamped when absent; a no-op while no trace is running, so a
+   * binding records unconditionally and pays nothing when tracing is off.
+   */
+  record(msg: TraceMessageInput): void {
+    if (this.tracer === undefined) return;
+    this.tracer.push({ ...msg, at: msg.at ?? now() });
   }
 
   send(ev: Ev): void {
@@ -497,7 +559,7 @@ export class MachineInstance<
     switch (t.kind) {
       case "stay":
         // Explicit stay notifies and logs (design §11.3).
-        this.record(this.stateName, this.stateName, ev, t.desc);
+        this.logTransition(this.stateName, this.stateName, ev, t.desc);
         this.notify(ev, t.desc);
         return;
       case "goto":
@@ -549,7 +611,7 @@ export class MachineInstance<
     const depth = this.sbbStack.length;
     // State exit: cancel the after timer and non-sticky delays (§3.2).
     this.timers.onExit();
-    this.record(
+    this.logTransition(
       fromLabel ?? this.qual(this.stateName),
       this.qual(target),
       ev,
@@ -705,10 +767,11 @@ export class MachineInstance<
       type: `${frame.def.namespace}:${outcome}`,
       data,
     } as AnyEvent;
+    this.ownEvents.add(ev);
     const desc = `sbb return ${ev.type}`;
     const from = this.qual(this.stateName);
     this.popFrame(frame);
-    this.record(from, this.qual(this.stateName), undefined, desc);
+    this.logTransition(from, this.qual(this.stateName), undefined, desc);
     this.notify(undefined, desc);
     // The host resumes as a stay(): its `enter` does not re-run, and the
     // deadline it never got to arm is armed now, afresh (design §12.4).
@@ -748,7 +811,7 @@ export class MachineInstance<
       const frame = this.sbbStack[this.sbbStack.length - 1] as SbbFrame;
       const from = this.qual(this.stateName);
       this.popFrame(frame);
-      this.record(
+      this.logTransition(
         from,
         this.qual(this.stateName),
         undefined,
@@ -871,7 +934,7 @@ export class MachineInstance<
     this.tasks.cancelAll();
     for (const child of [...this.children.values()]) child.forceStop();
     this.children.clear();
-    this.record(
+    this.logTransition(
       this.stateName,
       TERMINAL_STATES.aborted,
       undefined,
@@ -912,7 +975,7 @@ export class MachineInstance<
     const terminal = TERMINAL_STATES[outcome];
     this.inbox.length = 0;
     this.pendingQ.clear();
-    this.record(this.stateName, terminal, ev, reason);
+    this.logTransition(this.stateName, terminal, ev, reason);
     this.stateName = terminal;
     this.timers.cancelAll();
     this.tasks.cancelAll();
@@ -990,19 +1053,52 @@ export class MachineInstance<
     }
   }
 
-  private record(
+  private logTransition(
     from: string,
     to: string,
     ev: AnyEvent | undefined,
     desc?: string,
   ): void {
-    this.translog.push({ from, to, event: ev?.type, desc });
+    const at = now();
+    this.translog.push({ at, from, to, event: ev?.type, desc });
+    if (this.tracer !== undefined) {
+      const outcome = OUTCOME_OF[to];
+      this.tracer.push(
+        outcome !== undefined
+          ? { kind: "terminal", at, outcome, reason: desc }
+          : {
+              kind: "transition",
+              at,
+              from,
+              to,
+              event: ev?.type,
+              desc,
+              internal: this.isInternal(ev),
+            },
+      );
+    }
     if (this.debug) {
       const evLabel = ev?.type ?? "";
       this.debugLogger(
         `${evLabel}: (${from}) -> (${to})${desc ? ` "${desc}"` : ""}`,
       );
     }
+  }
+
+  /**
+   * Did the machine cause this itself? Its start, an `after`, a shutdown,
+   * a block's return, a message from a parent or a child: none came from
+   * the peer, and the sequence diagram must not draw them as if it had.
+   */
+  private isInternal(ev: AnyEvent | undefined): boolean {
+    return (
+      ev === undefined ||
+      ev === AFTER_EVENT ||
+      ev === SHUTDOWN_EVENT ||
+      INTERNAL_TYPES.has(ev.type) ||
+      INTERNAL_PREFIXES.some((p) => ev.type.startsWith(p)) ||
+      this.ownEvents.has(ev)
+    );
   }
 
   private notify(ev: AnyEvent | undefined, desc?: string): void {

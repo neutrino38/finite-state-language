@@ -14,13 +14,52 @@ defmodule FSL.Diagram do
 
   ## The event list
 
-  Both callbacks are handed what `FSL.Journal.events/0` collected, oldest first:
+  Both callbacks are handed what `FSL.Journal` collected, oldest first:
 
-      %{kind: :command,    type: atom() | nil, name: String.t()}
-      %{kind: :transition, type: atom() | nil, to: term(), event: String.t()}
-      %{kind: :terminal,   outcome: atom(),    reason: String.t()}
+      %{kind: :command,    at: integer(), type: atom() | nil, name: String.t()}
+      %{kind: :transition, at: integer(), type: atom() | nil, to: term(), event: String.t()}
+      %{kind: :terminal,   at: integer(), outcome: atom(),    reason: String.t()}
+      %{kind: :message,    at: integer(), ...}   # see below
 
-  and the run's metadata: `%{scenario: String.t(), pid: String.t(), config: keyword()}`.
+  and the run's metadata: `%{scenario: String.t(), pid: String.t(), config: keyword(), t0: integer()}`.
+
+  `:at` and `:t0` are monotonic microseconds. A renderer prefixes a label with
+  `+Nms` when both are present (`stamp/2`), and with nothing otherwise. An event
+  of a kind a renderer does not know is skipped.
+
+  ## `:message` — what actually went over the wire
+
+  The first three kinds are what the machine *said* it did. A binding that can
+  see the protocol messages themselves records them as `:message` events, built
+  by the binding and handed over through `c:FSL.Host.journal_collect/0` or
+  `FSL.Journal.record/1`:
+
+      %{
+        kind: :message,
+        at: integer(),
+        dir: :in | :out,
+        lane: term(),              # the conversation it belongs to (SIP: the Call-ID)
+        party: String.t() | nil,   # local label of that conversation (SIP: the leg tag)
+        peer: String.t() | nil,    # the far end (SIP: "10.0.0.1:5060/udp")
+        label: String.t(),         # drawn as is
+        reply: boolean(),          # a reply: dashed
+        repeat: boolean()          # a repetition: dimmed
+      }
+
+  Any other key is the binding's own and is ignored. The renderer knows nothing
+  of the protocol: the binding decides what a label says and what counts as a
+  reply or a repetition.
+
+  One `:message` in the list switches a renderer to **traced mode**:
+
+  - one peer lane per distinct `lane`, in order of first appearance, instead of
+    the single peer lane (`message_lanes/1`);
+  - a protocol command is a note beside the arrows it produced, not an arrow of
+    its own — the arrows are the real messages now;
+  - a protocol transition draws its state note and no inbound arrow, for the
+    same reason.
+
+  Without one, the rendering is what it was before the kind existed.
 
   A renderer must **never write a secret**. `config` is the machine's `config`
   block as declared, which is where a password would be; both shipped renderers
@@ -133,6 +172,55 @@ defmodule FSL.Diagram do
 
     String.upcase(base) <> suffix
   end
+
+  @doc """
+  The time since the journal started, as a label prefix: `"+412ms "`. Empty when
+  the event or the metadata carries no clock.
+  """
+  @spec stamp(map(), map()) :: String.t()
+  def stamp(%{at: at}, %{t0: t0}) when is_integer(at) and is_integer(t0),
+    do: "+#{div(at - t0, 1000)}ms "
+
+  def stamp(_event, _meta), do: ""
+
+  @doc "Is this run traced — does it hold at least one `:message` event?"
+  @spec traced?([map()]) :: boolean()
+  def traced?(events), do: Enum.any?(events, &match?(%{kind: :message}, &1))
+
+  @doc """
+  The peer lanes of a traced run: one per distinct `:lane` of its `:message`
+  events, in order of first appearance, as
+  `%{lane: term(), alias: "peer1", label: String.t()}`.
+
+  The label is the first non-nil `:party` and the first non-nil `:peer` of that
+  lane joined by a space — `"outbound 10.0.0.1:5060/udp"` — or `"peer N"` when
+  neither is known. `[]` for an untraced run.
+  """
+  @spec message_lanes([map()]) :: [%{lane: term(), alias: String.t(), label: String.t()}]
+  def message_lanes(events) do
+    events
+    |> Enum.filter(&match?(%{kind: :message}, &1))
+    |> Enum.group_by(&Map.get(&1, :lane))
+    |> Enum.sort_by(fn {_lane, msgs} -> msgs |> Enum.map(&Map.get(&1, :at, 0)) |> Enum.min() end)
+    |> Enum.with_index(1)
+    |> Enum.map(fn {{lane, msgs}, index} ->
+      party = Enum.find_value(msgs, &Map.get(&1, :party))
+      peer = Enum.find_value(msgs, &Map.get(&1, :peer))
+
+      label =
+        case [party, peer] |> Enum.reject(&is_nil/1) |> Enum.join(" ") do
+          "" -> "peer #{index}"
+          label -> label
+        end
+
+      %{lane: lane, alias: "peer#{index}", label: label}
+    end)
+  end
+
+  @doc "A lane key as a header comment shows it: a string as is, anything else inspected."
+  @spec lane_name(term()) :: String.t()
+  def lane_name(lane) when is_binary(lane), do: lane
+  def lane_name(lane), do: inspect(lane)
 
   @doc "A media command name: `media_connect` → `connect`."
   @spec media_label(String.t()) :: String.t()

@@ -554,10 +554,14 @@ m.getSnapshot()  // stable {state, context} reference for external-store APIs
 m.matches(s)     // convenience: m.state === s, type-checked
 m.done           // Promise<{outcome: "success"|"failure"|"aborted", reason?}>
 m.shutdown(r?)   // cooperative shutdown (§8)
-m.log            // ring buffer of the last N transitions (state, event, desc)
+m.log            // ring buffer of the last N transitions (at, state, event, desc)
+m.trace          // the run since its trace started, or undefined (§6.2)
+m.startTrace()   // start it now, at most once (§6.2)
+m.record(msg)    // a message the binding saw on the wire (§6.2)
 ```
 
-`opts`: `{ debug?: boolean, args?: Partial<Ctx>, logger?: (line) => void }`.
+`opts`: `{ debug?: boolean, args?: Partial<Ctx>, logger?: (line) => void,
+trace?: boolean, traceSize?: number }`.
 `args` is merged into the fresh context — the equivalent of `args:` for
 sub-FSMs and of external configuration for top machines.
 
@@ -576,6 +580,45 @@ sub-FSMs and of external configuration for top machines.
   tool: it parses TypeScript, so it lives outside the runtime.
 - The transition log gives the **dynamic** trace. Readability is a
   feature: a machine you can print is a machine you can review.
+
+### 6.2 The trace of a run
+
+The transition log forgets; a **trace** keeps a whole run, so it can be
+drawn as a sequence diagram. Both dialects have one — `m.trace` here,
+`FSL.Journal` in Elixir — and both render it as the same Mermaid
+`sequenceDiagram`, so the two ends of one call read side by side.
+
+- **Off by default and free when off.** `start({ trace: true })` traces
+  from the first state; `m.startTrace()` or `fx.startTrace()` start it
+  mid-run — from a handler, the transition that handler returns is the
+  first one recorded. A trace starts **at most once**. Elixir's
+  counterpart is a `debug` field set in a state, asked again after every
+  state.
+- **A clock on every event.** `at` is a monotonic time in milliseconds
+  (`performance.now()`; microseconds in Elixir), and the trace's `t0` is
+  the diagram's origin: every label is prefixed `+Nms`. Events are ordered
+  by `at`, not by arrival, since a binding may stamp a message on its own
+  clock. `m.log` entries carry the same `at`.
+- **Four kinds**: `transition`, `terminal`, and `message` — what actually
+  went over the wire, built by the binding: `dir` (`in`/`out`), `lane`
+  (the conversation: SIP's Call-ID), optional `party` and `peer` to label
+  it, a ready-made `label`, and `reply` / `repeat`. Elixir also has
+  `command`, what a binding's verb said it sent; TS has no verbs. **A
+  renderer skips a kind it does not know.**
+- **Traced mode.** One `message` switches the diagram to one peer lane per
+  conversation, requests solid, replies dotted, repetitions with the open
+  arrowhead, and transitions without an arrow of their own — the arrows are
+  the real messages now. Without one, a transition caused by an event from
+  outside is an arrow from the single peer lane.
+- **From the peer, by exclusion.** What the machine caused itself — its
+  start, an `after`, a shutdown, a block's return, a parent's or a child's
+  message, the result of a task — is a note. Everything else came from the
+  peer, unless the binding classifies it (`lane:` of `traceToMermaid`
+  here, `c:FSL.Host.event_type/1` in Elixir). The renderer never guesses a
+  protocol from a name.
+- **Bounded** here by `traceSize` (default 10 000, oldest dropped); a
+  browser tab lives longer than a server-side run, which Elixir's journal
+  flushes to a file when it ends.
 
 ---
 
@@ -971,7 +1014,7 @@ one's mechanism and not find it.
 - **FSL/TS has no callback surface at all** (§1.3). The application stores stack
   handles in the context and translates stack callbacks into events with
   `machine.send(...)`. A ~50-line binding file is the whole coupling.
-- **FSL Elixir has a behaviour**, `FSL.Host`, with twelve callbacks. A binding
+- **FSL Elixir has a behaviour**, `FSL.Host`, with fourteen callbacks. A binding
   needs it because on the BEAM it must act *inside* the machine's process and
   *during* the machine's compilation: classify a `receive` pattern at
   macro-expansion time, prepend a clause to every wait, act on an event before
@@ -1004,6 +1047,23 @@ delivered on 2026-09-12 (§11.6). What remains:
 |---|---|---|
 | TS | `goto back`, if a screen ever needs it (§11.4) | deferred, not refused; Elixir's semantics are the reference — one slot and not a stack, written only on a real state change, two consecutive calls toggling, no previous state being a clean failure |
 | both | `queue()`, the `Queue()` of the field | named in Elixip's SBB design as future work; it takes names for objects a server owns, so it is not a language question yet |
+
+### 12.4b The trace, reconciled — 2026-09-28
+
+FSL Elixir 0.3.0 put a clock on its journal, let a binding record the
+messages it sees, and added the `:message` kind with a traced rendering.
+This dialect had no journal at all — `m.log` was a ring buffer — so 0.3.0
+adds one, §6.2, and both packages carry 0.3.0. What differs is mechanism,
+not behaviour:
+
+| Topic | FSL/TS | FSL Elixir | Why |
+|---|---|---|---|
+| where the wire is recorded | `m.record(msg)`, called by the binding from the stack's callbacks | `c:FSL.Host.journal_started/1` and `c:FSL.Host.journal_collect/0`, merged at flush, plus `FSL.Journal.record/1` | a SIP transaction runs in another BEAM process; JS callbacks run on the machine's thread |
+| from the peer or not | the engine marks a transition `internal`; the renderer's `lane:` option classifies the rest | the event's type, answered by the host at compile time | TS has no host (§12.2) |
+| the clock | `performance.now()`, milliseconds | `System.monotonic_time(:microsecond)` | each platform's monotonic clock; both render `+Nms` |
+| renderers | Mermaid | PlantUML (default) and Mermaid | PlantUML is a server-side habit; Mermaid is the one both draw |
+| `command` events | none | a binding's verbs | TS has no verbs |
+| bound | `traceSize`, default 10 000 | none: one run, flushed when it ends | a browser tab outlives a server-side run |
 
 ### 12.5 Checked and found to agree
 

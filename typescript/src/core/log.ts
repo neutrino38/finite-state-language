@@ -5,6 +5,8 @@
 
 export interface LogEntry {
   readonly seq: number;
+  /** `performance.now()` when it happened, in milliseconds. */
+  readonly at: number;
   readonly from: string;
   readonly to: string;
   readonly event?: string;

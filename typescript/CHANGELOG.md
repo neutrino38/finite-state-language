@@ -7,6 +7,36 @@ and the project adheres to [Semantic Versioning](https://semver.org/)
 Service Building Block layer, not the freeze 0.1.2 had reserved the
 number for).
 
+## [0.3.0] — 2026-09-28
+
+The trace of a run, drawn as a sequence diagram — the counterpart of FSL
+Elixir's `FSL.Journal`, reconciled with its 0.3.0 in the spec (§6.2,
+§12.4b), which is why both packages carry this number. Additive: nothing
+existing changes behaviour.
+
+### Added
+
+- **`instance.trace`, a whole run kept for drawing.** `start({ trace: true })`
+  traces from the first state; `instance.startTrace()` and
+  `fx.startTrace()` start it mid-run — from a handler, the transition it
+  returns is the first one recorded — and at most once. Every transition,
+  and a `terminal` event for how the run ended. Off by default and free
+  when off; bounded by `traceSize` (default 10 000, oldest dropped).
+  Inherited by children, which trace their own runs.
+- **`instance.record(msg)`, for what actually went over the wire.** A
+  `message` event built by the binding from its stack's callbacks: `dir`,
+  `lane` (the conversation), `party`, `peer`, `label`, `reply`, `repeat`.
+  A no-op while no trace runs, so a binding records unconditionally.
+- **`traceToMermaid(trace, opts)`**: a Mermaid `sequenceDiagram`, the
+  one FSL Elixir's `FSL.Diagram.Mermaid` draws for the other end of the
+  call. `+Nms` on every label; one `message` switches to traced mode (a
+  peer lane per conversation, replies dotted, repetitions with the open
+  arrowhead); a kind it does not know is skipped. What the machine caused
+  itself is a note, everything else an arrow from the peer unless
+  `opts.lane` says otherwise.
+- **`at` on every `instance.log` entry**: `performance.now()`, the same
+  clock as the trace.
+
 ## [0.2.0] — 2026-08-19
 
 Service Building Blocks, reserved in the spec since §8.4 was written and

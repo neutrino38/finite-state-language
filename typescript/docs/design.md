@@ -46,6 +46,7 @@ src/
     timers.ts         TimerBag: `after` timer + fx.delay handles
     pending.ts        PendingQueue (selective receive, spec §4.2)
     log.ts            TransitionLog ring buffer + debug line formatting
+    trace.ts          the trace of a run and its sequence diagram (spec §6.2)
     mermaid.ts        toMermaid() static-graph export
   http/
     index.ts          httpGet + HttpResult (subpath export, spec §4.4)
@@ -594,10 +595,13 @@ nothing in the core is React-aware.
 
 ---
 
-## 9. Observability (spec §6.1)
+## 9. Observability (spec §6.1, §6.2)
 
-- **TransitionLog**: fixed-size ring buffer (default 50, `opts.log?.size`)
-  of `{ seq, from, to, eventType?, desc? }`. Exposed as `instance.log`.
+- **TransitionLog**: fixed-size ring buffer (default 50, `opts.logSize`)
+  of `{ seq, at, from, to, event?, desc? }`. Exposed as `instance.log`.
+  `at` is `performance.now()`: a monotonic clock in milliseconds, which is
+  what an interval between two entries needs and what a wall clock that
+  NTP can step backwards does not give.
 - **Debug logging**: `opts.debug` logs each transition through
   `opts.logger ?? console.debug` in the Elixip format:
   `` `${eventType}: (${from}) -> (${to}) "${desc}"` ``. Pending/overflow/
@@ -653,6 +657,66 @@ nothing in the core is React-aware.
   target reached through a method or an imported function is not seen.
   Over-approximation is the safe direction for documentation — a drawn
   edge that cannot fire is visible, a missing edge is not.
+
+- **The trace — a run as a sequence diagram (spec §6.2).** The ring
+  buffer says where a machine has been lately; it cannot draw what it did,
+  because it forgets the start of any run longer than fifty transitions
+  and it never sees the protocol. The trace is the counterpart of FSL
+  Elixir's `FSL.Journal`: every transition since it started, the terminal,
+  and the messages the binding saw go over the wire, rendered by
+  `traceToMermaid` as the same `sequenceDiagram` `FSL.Diagram.Mermaid`
+  draws — so the browser end and the server end of one call can be read
+  side by side.
+
+  *Started, not configured.* `start({ trace: true })` traces from the
+  first state; `instance.startTrace()` and `fx.startTrace()` start it
+  mid-run, the second from a handler, so that the transition the handler
+  returns is the first one recorded. It starts at most once: a state that
+  asks on every entry does not restart the diagram's clock. A child
+  inherits `trace` like it inherits `debug`, and traces its own run.
+
+  *Recorded where the transitions are already recorded.* `logTransition`
+  (the private hook `record` was renamed to, the public name being taken)
+  feeds the ring buffer and, when a trace runs, the trace — one clock
+  reading for both. A transition into a terminal state becomes a
+  `terminal` event, as `FSL.Journal` records `:succeeded` / `:failed`.
+
+  *Internal or not, decided by the engine.* Elixir's renderer places an
+  arrow by the event's type, which a host classifies at compile time. TS
+  has no host, so the instance marks each transition `internal` when it
+  caused it itself: no event (the start, a block entered or unwound), the
+  `after` and shutdown pseudo-events, `parent:msg` / `child:msg` /
+  `child:exit`, `task:*` and `http:*` (work the machine started — Elixir
+  draws `:timer`, `:http`, `:db` the same way), and a block's return,
+  which is recognised by identity (a `WeakSet` of the events `sbbReturn`
+  built) rather than by a namespace a user event could share. Everything
+  else is drawn from the peer, **by exclusion**, unless the caller's
+  `opts.lane` says otherwise — a web phone hears its UI too, and
+  `ui:*` is the binding's word, not the renderer's.
+
+  *The binding records the wire directly.* Elixir needs
+  `c:FSL.Host.journal_started/1` and `c:FSL.Host.journal_collect/0`
+  because a SIP transaction runs in another process and its messages
+  have to be collected at the end. In JS the stack's callbacks run on the
+  same thread as the machine, so the binding calls `instance.record()`
+  from them as they happen — a no-op while no trace runs, so it records
+  unconditionally. `at` is stamped when absent; one given explicitly may
+  be older than what the machine recorded since, so `trace` sorts by `at`
+  (stably) when read.
+
+  *Bounded.* A web phone left open for a day must not grow a list nobody
+  reads: `traceSize`, default 10 000 events, oldest dropped first — the
+  same discipline as the ring buffer and the pending queue.
+
+  *Rendering.* One `message` switches to traced mode: one peer lane per
+  distinct `lane`, in order of first appearance, labelled with the first
+  `party` and `peer` seen on it; a request solid, a reply dotted, a
+  repetition with the open arrowhead; and a transition no longer draws an
+  arrow of its own. `+Nms` on every label. `#`, `;` and newlines are
+  neutralised in one pass, and an empty label becomes `?`, because Mermaid
+  drops an arrow with no label silently. A kind the renderer does not
+  know is skipped. Mermaid only — PlantUML stays an Elixir renderer, since
+  nothing on this side of the wire draws with it.
 
 ---
 

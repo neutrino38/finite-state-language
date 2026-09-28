@@ -234,6 +234,38 @@ handler that can reach two targets draws two edges. Only string-literal
 descriptions become labels. Run it from a test that fails when the
 checked-in diagram and the source disagree, and the two cannot drift.
 
+### A run, as a sequence diagram
+
+The two exports above draw what a machine _can_ do. A trace draws what one
+run _did_: every transition since the trace started, how it ended, and —
+when the binding records them — the messages that actually went over the
+wire. It renders as the same Mermaid sequence diagram FSL Elixir draws for
+the server end of the call.
+
+```ts
+import { traceToMermaid } from "finite-state-language";
+
+const call = Phone.start({ trace: true }); // or later: call.startTrace()
+
+// in the binding, from the stack's callbacks: one arrow per message
+session.on("sending", (e) =>
+  call.record({ kind: "message", dir: "out", lane: callId, label: "INVITE" }),
+);
+
+console.log(
+  traceToMermaid(call.trace!, {
+    label: "Alice",
+    lane: (type) => (type.startsWith("ui:") ? "local" : "peer"),
+  }),
+);
+```
+
+Every label carries `+Nms`, the time since the trace started. A state can
+start the trace itself with `fx.startTrace()`, when a run starts looking
+worth watching. `record()` is a no-op while no trace runs, so a binding
+records unconditionally; the trace keeps at most `traceSize` events
+(default 10 000). `instance.log` entries carry the same clock, as `at`.
+
 ## Documentation
 
 - [Language specification](https://framagit.org/elixip/finite-state-language/-/blob/main/spec/fsl-js-ts.md)

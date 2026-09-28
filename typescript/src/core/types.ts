@@ -7,6 +7,7 @@
 
 import type { Transition } from "./transition.js";
 import type { LogEntry } from "./log.js";
+import type { Trace, TraceMessageInput } from "./trace.js";
 
 /** An event is any object with a string `type` field (spec §4). */
 export type AnyEvent = { type: string };
@@ -140,6 +141,13 @@ export interface Fx<Ev extends AnyEvent, Ctx = unknown> {
   ): void;
   /** Deliver `{type: "parent:msg", payload}` to a named child. */
   notify(child: string, payload: unknown): void;
+  /**
+   * Start this instance's trace, if it is not running already (spec
+   * §6.2). The transition this handler returns is the first one
+   * recorded — the way a state turns tracing on for the rest of a run
+   * that looks worth watching.
+   */
+  startTrace(): void;
   /**
    * Deliver `{type: "child:msg", from, payload}` to the parent.
    * A no-op without a parent, so the same machine runs standalone.
@@ -432,6 +440,14 @@ export interface StartOpts<Ctx> {
   /** Transition ring-buffer size, default 50. */
   logSize?: number;
   /**
+   * Trace the whole run from its start (spec §6.2): `instance.trace`,
+   * drawn with `traceToMermaid`. Inherited by children, which trace
+   * their own runs. Off by default, and free when off.
+   */
+  trace?: boolean;
+  /** Most events a trace keeps, oldest dropped first; default 10 000. */
+  traceSize?: number;
+  /**
    * Grace period (ms) granted to children for cooperative shutdown
    * before stragglers are force-stopped, default 5000 (spec §8.1).
    */
@@ -494,6 +510,11 @@ export interface Instance<
   readonly sbb: SbbView | undefined;
   readonly done: Promise<DoneResult>;
   readonly log: readonly LogEntry[];
+  /**
+   * The run since its trace started, or undefined while it has not
+   * (spec §6.2). Still readable once the machine is done.
+   */
+  readonly trace: Trace | undefined;
   readonly pending: readonly Ev[];
   send(ev: Ev): void;
   subscribe(fn: Listener<Ctx, Ev, SN>): () => void;
@@ -501,6 +522,14 @@ export interface Instance<
   matches(s: SN | TerminalStateName): boolean;
   /** Cooperative shutdown (spec §8.2); resolves with the final outcome. */
   shutdown(reason?: string): Promise<DoneResult>;
+  /** Start the trace now, if it is not running already (spec §6.2). */
+  startTrace(): void;
+  /**
+   * Record a message the binding saw go over the wire (spec §6.2): the
+   * arrows of a traced sequence diagram. `at` is stamped when absent. A
+   * no-op while no trace runs, so a binding can call it unconditionally.
+   */
+  record(msg: TraceMessageInput): void;
 }
 
 export interface Machine<Ctx, Ev extends AnyEvent, SN extends string = string> {

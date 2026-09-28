@@ -21,7 +21,26 @@ defmodule FSL.Journal do
       config :my_app, :log_sequence, true
 
   A single machine can also turn it on for itself, if its embedding's context has
-  a `debug` field.
+  a `debug` field. `FSL.Runner` asks again after every state, so a flag set in
+  the middle of a run starts the journal at the transition that follows.
+
+  ## Time
+
+  Every event carries `:at`, the monotonic time it was recorded in
+  microseconds, and the metadata carries `:t0`, the time the journal started.
+  The renderers draw `+Nms` from the two; the order of events recorded by
+  different processes is decided by `:at` alone.
+
+  ## Events recorded elsewhere
+
+  Some of what a run does never passes through the machine's process — a
+  protocol message sent by a transaction the binding runs, for instance. A
+  binding that records such events keeps them itself and answers two optional
+  callbacks: `c:FSL.Host.journal_started/1`, called in the machine's process
+  when the journal starts, and `c:FSL.Host.journal_collect/0`, which hands them
+  over at `flush/0`. They are merged with the journal's own events by `:at`.
+  An event the binding built in the machine's process goes in directly with
+  `record/1`.
 
   ## Where it lives
 
@@ -36,23 +55,38 @@ defmodule FSL.Journal do
   @journal_key :scenario_sequence_journal
   @meta_key :scenario_sequence_meta
 
-  @typedoc "A recorded event, in chronological order once read back via `events/0`."
+  @typedoc """
+  A recorded event, in chronological order once read back via `events/0`.
+  `:message` events are built by a binding (see `FSL.Diagram` for their shape).
+  """
   @type event ::
-          %{kind: :command, type: atom(), name: String.t()}
-          | %{kind: :transition, to: atom() | String.t(), event: String.t(), type: atom() | nil}
+          %{kind: :command, at: integer(), type: atom(), name: String.t()}
+          | %{
+              kind: :transition,
+              at: integer(),
+              to: atom() | String.t(),
+              event: String.t(),
+              type: atom() | nil
+            }
           | %{
               kind: :terminal,
+              at: integer(),
               outcome: :succeeded | :failed,
               reason: String.t(),
               type: atom() | nil
             }
+          | %{:kind => :message, :at => integer(), optional(atom()) => term()}
 
-  @type meta :: %{scenario: String.t(), pid: String.t(), config: keyword()}
+  @typedoc "`:t0` is the monotonic time the journal started, the diagram's origin."
+  @type meta :: %{scenario: String.t(), pid: String.t(), config: keyword(), t0: integer()}
 
-  @doc "Start a journal in the current process with the given metadata."
-  @spec start(meta()) :: :ok
+  @doc """
+  Start a journal in the current process with the given metadata. `:t0` is
+  added to it.
+  """
+  @spec start(map()) :: :ok
   def start(meta) when is_map(meta) do
-    Process.put(@meta_key, meta)
+    Process.put(@meta_key, Map.put(meta, :t0, now()))
     Process.put(@journal_key, [])
     :ok
   end
@@ -64,7 +98,7 @@ defmodule FSL.Journal do
   @doc "Record an outbound command, e.g. `record_command(:sip, \"send_INVITE\")`."
   @spec record_command(atom(), String.t() | atom()) :: :ok
   def record_command(type, name) do
-    append(%{kind: :command, type: type, name: to_string(name)})
+    append(%{kind: :command, at: now(), type: type, name: to_string(name)})
   end
 
   @doc """
@@ -77,7 +111,18 @@ defmodule FSL.Journal do
     append(transition_event(state, blank_to_string(event), type))
   end
 
-  @doc "Chronological list of recorded events (`[]` when disabled)."
+  @doc """
+  Record an event a binding built — a `:message`, typically. `:at` is stamped
+  when the event has none. A no-op when no journal is active.
+  """
+  @spec record(map()) :: :ok
+  def record(%{kind: _} = event), do: append(Map.put_new_lazy(event, :at, &now/0))
+
+  @doc """
+  Chronological list of the events recorded in this process (`[]` when
+  disabled). Events a binding recorded elsewhere are not in it: they join at
+  `flush/0`.
+  """
   @spec events() :: [event()]
   def events do
     case Process.get(@journal_key) do
@@ -91,7 +136,10 @@ defmodule FSL.Journal do
   def meta, do: Process.get(@meta_key)
 
   @doc """
-  Render the PlantUML file and clear the journal from the process dictionary.
+  Render the diagram file and clear the journal from the process dictionary.
+
+  The events the host recorded outside this process (`c:FSL.Host.journal_collect/0`)
+  are merged in first, ordered by `:at`.
 
   Returns `{:ok, path}` on success, `:disabled` when no journal is active, or
   `{:error, reason}` if the file could not be written.
@@ -104,18 +152,15 @@ defmodule FSL.Journal do
 
       _ ->
         meta = Process.get(@meta_key)
+        module = Process.get(:scenario_module)
+        events = Enum.sort_by(events() ++ collect(module), &Map.get(&1, :at, 0))
 
         # The scenario's own host may name a renderer of its own; the default is
         # the PlantUML one this library ships (`c:FSL.Host.diagram_renderer/0`).
         renderer =
-          FSL.Host.call(
-            Process.get(:scenario_module),
-            :diagram_renderer,
-            [],
-            FSL.Diagram.PlantUML
-          )
+          FSL.Host.call(module, :diagram_renderer, [], FSL.Diagram.PlantUML)
 
-        content = renderer.render(events(), meta)
+        content = renderer.render(events, meta)
         path = renderer.filename(meta)
         clear()
 
@@ -126,15 +171,27 @@ defmodule FSL.Journal do
     end
   end
 
-  @doc "Drop the journal from the current process (used by `flush/0` and tests)."
+  @doc """
+  Drop the journal from the current process (used by `flush/0` and tests).
+  What the host recorded elsewhere is collected and dropped with it, so a run
+  that ends without a flush leaves nothing behind in the binding's store.
+  """
   @spec clear() :: :ok
   def clear do
+    if enabled?(), do: collect(Process.get(:scenario_module))
     Process.delete(@journal_key)
     Process.delete(@meta_key)
     :ok
   end
 
   # ── internals ──────────────────────────────────────────────────────────────
+
+  defp now, do: System.monotonic_time(:microsecond)
+
+  # No scenario module in the process (a journal started by hand, in a test):
+  # no host to ask.
+  defp collect(nil), do: []
+  defp collect(module), do: FSL.Host.call(module, :journal_collect, [], [])
 
   # No-op when disabled, so callers (note_command / report) need no guard.
   defp append(event) do
@@ -147,11 +204,11 @@ defmodule FSL.Journal do
   end
 
   defp transition_event(state, event, type) when state in [:succeeded, :failed] do
-    %{kind: :terminal, outcome: state, reason: event, type: type}
+    %{kind: :terminal, at: now(), outcome: state, reason: event, type: type}
   end
 
   defp transition_event(state, event, type) do
-    %{kind: :transition, to: state, event: event, type: type}
+    %{kind: :transition, at: now(), to: state, event: event, type: type}
   end
 
   defp blank_to_string(nil), do: ""

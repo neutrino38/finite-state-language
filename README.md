@@ -1,9 +1,9 @@
 # FSL — Finite State Language
 
 > **Where this stands:** two implementations, one language.
-> [`finite-state-language@0.2.0`](https://www.npmjs.com/package/finite-state-language)
+> [`finite-state-language@0.3.0`](https://www.npmjs.com/package/finite-state-language)
 > on npm for TypeScript and JavaScript,
-> [`finite_state_language@0.2.0`](https://hex.pm/packages/finite_state_language)
+> [`finite_state_language@0.3.0`](https://hex.pm/packages/finite_state_language)
 > on hex for Elixir. The API is still soft — now is a good time to state your
 > opinion.
 
@@ -113,7 +113,7 @@ function Phone() {
 Elixir — one machine per process, and a `mix.exs` line:
 
 ```elixir
-{:fsl, "~> 0.2", hex: :finite_state_language}
+{:fsl, "~> 0.3", hex: :finite_state_language}
 ```
 
 See [`elixir/README.md`](elixir/README.md) and the runnable
@@ -156,8 +156,8 @@ service, the pun has done its job.
 - [x] Diagrams from the source (`finite-state-language/diagram`)
 - [x] Service building blocks (`fx.sbb` / `fx.sbbReturn`)
 - [ ] JsSIP web phone — full example, as its own project
-- [x] `finite-state-language@0.2.0` on npm
-- [x] `finite_state_language@0.2.0` on hex
+- [x] `finite-state-language@0.3.0` on npm
+- [x] `finite_state_language@0.3.0` on hex
 
 ## Get involved
 

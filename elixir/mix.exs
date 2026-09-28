@@ -1,21 +1,22 @@
 defmodule FSL.MixProject do
   use Mix.Project
 
-  # One number for one language: this package and the npm package
-  # `finite-state-language` carry the same version, because what they share is
-  # the *contract* — the SBB return shape, the vocabulary declared and refused,
-  # the block-level bound, `resume:`, the inter-machine event names — reconciled
-  # clause by clause in ../spec/fsl-js-ts.md §12. Two numbers would tell a reader
-  # that one half is a release behind, which is the thing this repository exists
-  # to deny. So this package opened at 0.2.0, matching the sibling.
+  # One language, two packages: this one and the npm package
+  # `finite-state-language` share a *contract* — the SBB return shape, the
+  # vocabulary declared and refused, the block-level bound, `resume:`, the
+  # inter-machine event names — reconciled clause by clause in
+  # ../spec/fsl-js-ts.md §12. So this package opened at 0.2.0, matching the
+  # sibling, and a version of the contract is a version both packages carry.
   #
-  # The PATCH level is the exception, and the only one: a fix that changes no
-  # contract has nothing to reconcile, and holding it back until the sibling has
-  # something of its own to release would be a bug kept unpublished for the sake
-  # of a number. 0.2.1 is such a fix — a rule of Elixir about `rescue` and the
-  # stack, which the TypeScript implementation cannot have. Minor and major stay
-  # in step.
-  @version "0.2.1"
+  # The number follows the contract, not every release: what does not touch the
+  # contract is released here without waiting for the sibling. A fix is a PATCH —
+  # 0.2.1 is one, a rule of Elixir about `rescue` and the stack, which the
+  # TypeScript implementation cannot have. A feature the contract names is taken
+  # by both packages together, at the same number — 0.3.0 is one: the trace of a
+  # run and its sequence diagram, spec §6.2, with the mechanisms that differ
+  # recorded in §12.4b. A feature of this implementation alone would be a MINOR
+  # here, and the sibling would skip that number rather than reuse it.
+  @version "0.3.0"
   @source_url "https://framagit.org/elixip/finite-state-language"
 
   def project do

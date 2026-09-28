@@ -10,6 +10,43 @@ means for the field names: `lasterr`, `errorreason`, `currentstate` and
 struct field takes no deprecated alias — so renaming one is a **major** version
 with a migration, never a tidying.
 
+## [0.3.0] — 2026-09-28
+
+Released together with `finite-state-language` 0.3.0 on npm, which gains the
+same trace and the same Mermaid sequence diagram; the two are reconciled in
+[`spec/fsl-js-ts.md`](https://framagit.org/elixip/finite-state-language/-/blob/main/spec/fsl-js-ts.md)
+§6.2 and §12.4b, mechanism by mechanism.
+
+### Added
+
+- **A clock on the journal.** Every `FSL.Journal` event carries `:at`
+  (`System.monotonic_time(:microsecond)`) and the metadata carries `:t0`. Both
+  renderers prefix every label with `+Nms` when the two are present.
+- **Events recorded outside the machine's process.** Two optional callbacks on
+  `FSL.Host`: `c:FSL.Host.journal_started/1`, called in the machine's process
+  when its journal starts, and `c:FSL.Host.journal_collect/0`, which hands the
+  binding's events over at `FSL.Journal.flush/0` (merged by `:at`) and at
+  `FSL.Journal.clear/0` (dropped). `FSL.Journal.record/1` appends an event a
+  binding built, stamping `:at` when absent.
+- **The `:message` event kind**, for what actually went over the wire: `dir`,
+  `lane`, `party`, `peer`, `label`, `reply`, `repeat` (see `FSL.Diagram`). One
+  such event switches `FSL.Diagram.PlantUML` and `FSL.Diagram.Mermaid` to a
+  traced rendering: one peer lane per conversation, replies dashed, repetitions
+  dimmed, protocol commands as notes. `FSL.Diagram.stamp/2`, `traced?/1`,
+  `message_lanes/1` and `lane_name/1` are shared by both renderers.
+- **Starting the journal mid-run.** `FSL.Runner` asks again after every state,
+  with the context the state handed back, so a `debug` flag set in a state
+  starts the journal at the transition that follows. It starts at most once.
+
+### Changed
+
+- A renderer **skips** an event of a kind it does not know, where it raised a
+  `FunctionClauseError`.
+- A run without `:message` events renders as before, except for the `+Nms`
+  prefix now that the journal stamps its events. A test asserting an exact
+  label of a *journalled* run sees the prefix; one rendering hand-built events
+  without `:at` does not.
+
 ## [0.2.1] — 2026-09-21
 
 ### Fixed

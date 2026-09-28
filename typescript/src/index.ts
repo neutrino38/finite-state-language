@@ -49,5 +49,15 @@ export type {
   TransitionNotification,
 } from "./core/types.js";
 export type { LogEntry } from "./core/log.js";
+export { traceToMermaid } from "./core/trace.js";
+export type {
+  SequenceOpts,
+  Trace,
+  TraceEvent,
+  TraceMessage,
+  TraceMessageInput,
+  TraceTerminal,
+  TraceTransition,
+} from "./core/trace.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
