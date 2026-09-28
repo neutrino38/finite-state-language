@@ -303,10 +303,20 @@ defmodule FSL.Machine do
         unquote(ctx) =
           FSL.Host.hook(unquote(host), :on_state_enter, [unquote(ctx)], unquote(ctx))
 
+        # The context this state is about to build lives in a stack variable, and
+        # a `rescue` clause sees the bindings of the moment the `try` was entered
+        # — so, without this, the teardown below runs on the context of BEFORE the
+        # body, and everything the body allocated (a B2BUA leg, a media session)
+        # is invisible to it. `FSL.Context.snapshot/1` keeps the live context off
+        # the stack, refreshed here and by every funnel that rewrites it, and the
+        # two clauses read it back with `latest/1`.
+        FSL.Context.snapshot(unquote(ctx))
+
         try do
           unquote(body)
         rescue
           e ->
+            unquote(ctx) = FSL.Context.latest(unquote(ctx))
             Logger.error("Exception in scenario state #{unquote(name)}")
             Logger.error(Exception.format(:error, e, __STACKTRACE__))
             scenario_failure("exception!")
@@ -323,6 +333,7 @@ defmodule FSL.Machine do
           # the net under them, so that whatever happens the scenario ENDS, which
           # is what runs the teardown that answers the caller.
           :exit, reason ->
+            unquote(ctx) = FSL.Context.latest(unquote(ctx))
             Logger.error("Exit in scenario state #{unquote(name)}: #{inspect(reason)}")
 
             scenario_failure("exit!")
@@ -1015,11 +1026,13 @@ defmodule FSL.Machine do
       def __state___shutdown__(unquote(ctx)) do
         _ = unquote(ctx)
         Process.delete(:scenario_event_type)
+        FSL.Context.snapshot(unquote(ctx))
 
         try do
           unquote(body)
         rescue
           e ->
+            unquote(ctx) = FSL.Context.latest(unquote(ctx))
             Logger.error("Exception in scenario on_shutdown handler")
             Logger.error(Exception.format(:error, e, __STACKTRACE__))
             scenario_failure("exception!")

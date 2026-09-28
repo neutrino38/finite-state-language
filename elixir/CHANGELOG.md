@@ -10,6 +10,23 @@ means for the field names: `lasterr`, `errorreason`, `currentstate` and
 struct field takes no deprecated alias — so renaming one is a **major** version
 with a migration, never a tidying.
 
+## [0.2.1] — 2026-09-21
+
+### Fixed
+
+- **A state that raises or exits now tears down what it had allocated.** The
+  context is a stack variable, and Elixir's `rescue` and `catch` clauses see the
+  bindings of the moment the `try` was entered — so a state that allocated
+  something and then raised handed the teardown the context of *before* its own
+  body, and whatever it held was released by nobody. In the SIP binding that was
+  a call left standing on both legs with its media session allocated, found in
+  production on 2026-09-21. The live context is now kept off the stack:
+  `FSL.Context.snapshot/1` records it on every write through `put/3` and
+  `appdata_set/3` (and through a binding's own setter, which calls it), `state`
+  takes one on entry, and the two clauses read it back with
+  `FSL.Context.latest/1`. `FSL.Context.forget/0` drops it when an instance ends.
+  No API change: a machine, a block and a binding are untouched.
+
 ## [0.2.0] — 2026-09-12
 
 The first release of this package, numbered to match the TypeScript

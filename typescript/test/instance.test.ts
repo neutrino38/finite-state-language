@@ -147,6 +147,40 @@ describe("§6 machine instances", () => {
     expect(await m.done).toEqual({ outcome: "success", reason: "fine" });
   });
 
+  // The sibling implementation had the defect this pins: there, the context is
+  // a stack variable and Elixir's `rescue` sees the bindings of the moment the
+  // `try` was entered, so a state that allocated and then raised handed the
+  // teardown the context of before its own body (fixed in :fsl 0.2.1). Here the
+  // context is one object the instance holds and every handler mutates in
+  // place, so the property comes for free — which is exactly why it is worth an
+  // assertion rather than a reading of the code.
+  it("a state that throws hands cleanup what it had already written (§5)", async () => {
+    let seen = -1;
+    const C = defineMachine<Ctx, Ev>()({
+      name: "C",
+      context: () => ({ hits: 0 }),
+      cleanup(ctx) {
+        seen = ctx.hits;
+      },
+      states: {
+        initial_state: {
+          on: {
+            end: (_ev, ctx) => {
+              ctx.hits = 7;
+              throw new Error("boom");
+            },
+          },
+        },
+      },
+    });
+    const m = C.start({ logger: () => {} });
+    m.send({ type: "end" });
+
+    const r = await m.done;
+    expect(r.outcome).toBe("failure");
+    expect(seen).toBe(7);
+  });
+
   it("an exception in a subscriber is contained", () => {
     const m = M.start({ logger: () => {} });
     const seen: string[] = [];

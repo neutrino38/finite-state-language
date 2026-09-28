@@ -409,6 +409,23 @@ no leg was torn down, no media released, and the caller of a relayed request
 waited forever for a final response nobody would send. So: **whatever happens, the
 machine ends** — which is what runs the teardown.
 
+Ending is half of it; the other half is **what the teardown is handed**. A
+`rescue` or `catch` clause sees the bindings of the moment the `try` was entered,
+and the context is a variable each verb rebinds — so the teardown used to read
+the context of *before* the state's body, and whatever that state had allocated
+was released by nobody. It was the same production symptom as the missing catch
+above, one state further in: a SIP scenario that raised in the state where it set
+a call up left both legs standing (2026-09-21).
+
+The live context is therefore kept off the stack as well. `FSL.Context.put/3` and
+`appdata_set/3` — and a binding's own setter, which calls it — hand what they
+produce to `FSL.Context.snapshot/1`; `state/2` takes one on entry, so the photo is
+never older than what a clause holds; the two clauses begin by reading it back
+with `FSL.Context.latest/1`. One photo per process, which is the right grain: a
+machine instance is a process, a service building block runs in its host's process
+and shares its context, a child machine has one of its own. `FSL.Context.forget/0`
+drops it when an instance ends.
+
 ### 4.3 Teardown — `finalize/4`
 
 The order is fixed and it matters:
@@ -726,7 +743,8 @@ controller-driven stop from a machine that failed.
    resources of its own; a service building block is a nested FSM on this
    process's (§5, §6).
 3. A machine always *ends*: an exception or an exit inside a state becomes a
-   failure, so teardown runs (§4.2).
+   failure, so teardown runs — on the context that state had built, not the one
+   it was entered with (§4.2).
 4. Teardown order is children → the binding → `cleanup/1` → parent (§4.3).
 5. `laststate` is written only when the state actually changes (§2.3).
 6. `stay` does not re-arm the `after` deadline (§2.4).

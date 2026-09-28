@@ -8,7 +8,14 @@ defmodule FSL.MixProject do
   # clause by clause in ../spec/fsl-js-ts.md §12. Two numbers would tell a reader
   # that one half is a release behind, which is the thing this repository exists
   # to deny. So this package opened at 0.2.0, matching the sibling.
-  @version "0.2.0"
+  #
+  # The PATCH level is the exception, and the only one: a fix that changes no
+  # contract has nothing to reconcile, and holding it back until the sibling has
+  # something of its own to release would be a bug kept unpublished for the sake
+  # of a number. 0.2.1 is such a fix — a rule of Elixir about `rescue` and the
+  # stack, which the TypeScript implementation cannot have. Minor and major stay
+  # in step.
+  @version "0.2.1"
   @source_url "https://framagit.org/elixip/finite-state-language"
 
   def project do
