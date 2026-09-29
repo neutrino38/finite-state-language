@@ -57,6 +57,13 @@ defmodule FSL.Runner do
   Build the initial context from the scenario `config` block and run the FSM
   from `initial_state` until a terminal state is reached. Returns `:ok` on
   success or `{:error, reason}` on failure.
+
+  `:start_state` runs it from another state instead: a machine whose context was
+  set aside and is now restored — its `appdata` seeded through `:appdata` —
+  resumes where it stopped rather than replaying its opening. The state must be
+  one the module declares; a name it does not (a machine edited since its state
+  was set aside) starts at `initial_state`, with a warning naming both, rather
+  than not at all.
   """
   @spec run_instance(module(), keyword()) :: :ok | {:aborted, term()} | {:error, term()}
   def run_instance(module, opts \\ []) do
@@ -80,16 +87,34 @@ defmodule FSL.Runner do
     # default, so a run without overrides behaves exactly as before.
     config = Keyword.merge(module.__scenario_config__(), Keyword.get(opts, :config_overrides, []))
 
+    start = start_state(module, Keyword.get(opts, :start_state), states)
+
     ctx =
       module
       |> FSL.Host.call(:build_context, [config], %FSL.Context{})
       |> apply_run_opts(module, opts)
-      |> FSL.Context.put(:currentstate, :initial_state)
+      |> FSL.Context.put(:currentstate, start)
 
     maybe_start_sequence_journal(module, ctx, nil)
 
-    report(module, account(module, ctx, :initial), :initial_state, "start", nil)
-    loop(module, :initial_state, ctx, states)
+    desc = if start == :initial_state, do: "start", else: "resume"
+    report(module, account(module, ctx, :initial), start, desc, nil)
+    loop(module, start, ctx, states)
+  end
+
+  defp start_state(_module, nil, _states), do: :initial_state
+
+  defp start_state(module, state, states) do
+    if state in states do
+      state
+    else
+      Logger.warning(
+        "Scenario #{inspect(module)} has no state #{inspect(state)} to start at; " <>
+          "starting at :initial_state"
+      )
+
+      :initial_state
+    end
   end
 
   # Who a report is about, as the binding reads it (FSL.Host.account/2).
@@ -105,7 +130,7 @@ defmodule FSL.Runner do
   # it, the slot it reports under, the overrides merged into its config, and an
   # appdata seed. Everything else at `run_instance/2` names something only the
   # binding understands, and goes to the host below.
-  @fsl_run_opts [:parent_pid, :self_name, :appdata, :slot_id, :config_overrides]
+  @fsl_run_opts [:parent_pid, :self_name, :appdata, :slot_id, :config_overrides, :start_state]
 
   # Seed the context from run_instance/2 options: the parent PID (struct field),
   # the name the parent assigned this instance (appdata :__self_name__), and any

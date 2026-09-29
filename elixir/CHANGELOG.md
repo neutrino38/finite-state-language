@@ -10,6 +10,22 @@ means for the field names: `lasterr`, `errorreason`, `currentstate` and
 struct field takes no deprecated alias — so renaming one is a **major** version
 with a migration, never a tidying.
 
+## [0.5.0] — unreleased
+
+A feature of this implementation alone, so a minor the TypeScript package skips.
+
+### Added
+
+- **`:start_state`, an option of `FSL.Runner.run_instance/2`** (and so of
+  `spawn_uas_instance/2`, which forwards its options): run the machine from that
+  state instead of `initial_state`. For a binding that sets a run's context aside
+  — its `appdata`, and the state it stopped in — and restores it in a new
+  process later: the restored `appdata` goes in through `:appdata`, the state
+  through `:start_state`, and the machine resumes rather than replaying its
+  opening. The first monitor report says `resume` instead of `start`.
+  A name the module does not declare — a machine edited since its state was set
+  aside — starts at `initial_state`, with a warning naming both.
+
 ## [0.4.1] — unreleased
 
 A patch that completes 0.4.0's hand-off of a finished journal: the host may now

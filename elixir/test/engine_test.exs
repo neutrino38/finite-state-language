@@ -115,7 +115,55 @@ defmodule FSL.EngineTest do
     end
   end
 
+  # Tells the test which state it was entered in, and with which appdata: the
+  # opening is `initial_state`, the later part `awaiting_answer`.
+  defmodule Resumable do
+    use FSL.Machine
+
+    state initial_state do
+      send(appdata_get(:probe), {:entered, :initial_state, appdata_get(:step)})
+      appdata_set(:step, 1)
+      goto(awaiting_answer)
+    end
+
+    state awaiting_answer do
+      send(appdata_get(:probe), {:entered, :awaiting_answer, appdata_get(:step)})
+      scenario_success("answered")
+    end
+  end
+
   # ── Tests ───────────────────────────────────────────────────────────────────
+
+  describe ":start_state" do
+    test "runs the machine from the named state, with the appdata it was given" do
+      assert FSL.Runner.run_instance(Resumable,
+               start_state: :awaiting_answer,
+               appdata: %{probe: self(), step: 7}
+             ) == :ok
+
+      assert_received {:entered, :awaiting_answer, 7}
+      refute_received {:entered, :initial_state, _}
+    end
+
+    test "a state the module does not declare starts at initial_state" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert FSL.Runner.run_instance(Resumable,
+                   start_state: :gone,
+                   appdata: %{probe: self(), step: 7}
+                 ) == :ok
+        end)
+
+      assert_received {:entered, :initial_state, 7}
+      assert_received {:entered, :awaiting_answer, 1}
+      assert log =~ "no state :gone"
+    end
+
+    test "absent, the machine starts at initial_state" do
+      assert FSL.Runner.run_instance(Resumable, appdata: %{probe: self()}) == :ok
+      assert_received {:entered, :initial_state, nil}
+    end
+  end
 
   test "runs the FSM through next / named / loop transitions to success" do
     assert Basic.run(false) == :ok

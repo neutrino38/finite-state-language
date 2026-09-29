@@ -23,7 +23,11 @@ defmodule FSL.MixProject do
   # finished journal rather than opening a feature of its own — the same moment,
   # the same host, handed the events instead of a document — and it is optional,
   # so no binding written against 0.4.0 changes behaviour.
-  @version "0.4.1"
+  #
+  # 0.5.0 is a MINOR of this implementation alone: `run_instance/2` starts a
+  # machine at a named state (`:start_state`), for a binding that sets a run's
+  # context aside and restores it later.
+  @version "0.5.0"
   @source_url "https://framagit.org/elixip/finite-state-language"
 
   def project do
