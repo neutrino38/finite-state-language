@@ -10,7 +10,7 @@ means for the field names: `lasterr`, `errorreason`, `currentstate` and
 struct field takes no deprecated alias — so renaming one is a **major** version
 with a migration, never a tidying.
 
-## [0.5.0] — unreleased
+## [0.5.0] — 2026-09-30
 
 A feature of this implementation alone, so a minor the TypeScript package skips.
 
@@ -26,7 +26,7 @@ A feature of this implementation alone, so a minor the TypeScript package skips.
   A name the module does not declare — a machine edited since its state was set
   aside — starts at `initial_state`, with a warning naming both.
 
-## [0.4.1] — unreleased
+## [0.4.1] — 2026-09-28
 
 A patch that completes 0.4.0's hand-off of a finished journal: the host may now
 take the journal itself instead of a document. Optional, so a binding written

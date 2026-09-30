@@ -44,7 +44,7 @@ module that needs a client, and `Req` is declared `optional: true` for it.
 
 ```elixir
 def deps do
-  [{:fsl, "~> 0.3", hex: :finite_state_language}]
+  [{:fsl, "~> 0.5", hex: :finite_state_language}]
 end
 ```
 
